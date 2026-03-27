@@ -6,8 +6,9 @@ interface RemoteAudioEntry {
   container: HTMLDivElement;
   audio: HTMLAudioElement;
   label: HTMLDivElement;
-  sourceNode: MediaElementAudioSourceNode | null;
+  sourceNode: MediaStreamAudioSourceNode | null;
   gainNode: GainNode | null;
+  streamId: string | null;
 }
 
 interface RemoteVideoEntry {
@@ -77,8 +78,29 @@ export const createRemoteMediaUiController = (
 
   const applyRemoteAudioStateToAllEntries = (): void => {
     for (const entry of remoteAudioMap.values()) {
+      ensureRemoteAudioGraphForEntry(entry);
       applyRemoteAudioStateToEntry(entry);
     }
+  };
+
+  const disconnectRemoteAudioGraphForEntry = (
+    entry: RemoteAudioEntry,
+  ): void => {
+    try {
+      entry.sourceNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    try {
+      entry.gainNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    entry.sourceNode = null;
+    entry.gainNode = null;
+    entry.streamId = null;
   };
 
   const getParticipantAudioStateInternal = (
@@ -103,6 +125,11 @@ export const createRemoteMediaUiController = (
         });
 
         remoteAudioContext.onstatechange = () => {
+          if (remoteAudioContext?.state === "running") {
+            for (const entry of remoteAudioMap.values()) {
+              ensureRemoteAudioGraphForEntry(entry);
+            }
+          }
           applyRemoteAudioStateToAllEntries();
         };
       } catch {
@@ -119,6 +146,42 @@ export const createRemoteMediaUiController = (
     return remoteAudioContext;
   };
 
+  const getStreamId = (stream: MediaStream): string => {
+    return stream.id || stream.getAudioTracks()[0]?.id || "";
+  };
+
+  const ensureRemoteAudioGraphForEntry = (entry: RemoteAudioEntry): void => {
+    const stream = entry.audio.srcObject;
+    if (!(stream instanceof MediaStream)) {
+      disconnectRemoteAudioGraphForEntry(entry);
+      return;
+    }
+
+    const audioContext = ensureRemoteAudioContext();
+    if (!audioContext || audioContext.state !== "running") {
+      return;
+    }
+
+    const nextStreamId = getStreamId(stream);
+    if (entry.sourceNode && entry.gainNode && entry.streamId === nextStreamId) {
+      return;
+    }
+
+    disconnectRemoteAudioGraphForEntry(entry);
+
+    try {
+      const sourceNode = audioContext.createMediaStreamSource(stream);
+      const gainNode = audioContext.createGain();
+      sourceNode.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      entry.sourceNode = sourceNode;
+      entry.gainNode = gainNode;
+      entry.streamId = nextStreamId;
+    } catch {
+      disconnectRemoteAudioGraphForEntry(entry);
+    }
+  };
+
   const tryResumeRemoteAudioContext = (): void => {
     const context = ensureRemoteAudioContext();
     if (!context) {
@@ -126,6 +189,9 @@ export const createRemoteMediaUiController = (
     }
 
     if (context.state === "running") {
+      for (const entry of remoteAudioMap.values()) {
+        ensureRemoteAudioGraphForEntry(entry);
+      }
       applyRemoteAudioStateToAllEntries();
       return;
     }
@@ -133,6 +199,9 @@ export const createRemoteMediaUiController = (
     void context
       .resume()
       .then(() => {
+        for (const entry of remoteAudioMap.values()) {
+          ensureRemoteAudioGraphForEntry(entry);
+        }
         applyRemoteAudioStateToAllEntries();
       })
       .catch(() => {
@@ -346,35 +415,28 @@ export const createRemoteMediaUiController = (
       container.appendChild(audio);
       deps.dom.remoteAudioContainer.appendChild(container);
 
-      const audioContext = ensureRemoteAudioContext();
-      let sourceNode: MediaElementAudioSourceNode | null = null;
-      let gainNode: GainNode | null = null;
-      if (audioContext) {
-        try {
-          sourceNode = audioContext.createMediaElementSource(audio);
-          gainNode = audioContext.createGain();
-          sourceNode.connect(gainNode);
-          gainNode.connect(audioContext.destination);
-        } catch {
-          sourceNode = null;
-          gainNode = null;
-        }
-      }
-
       existing = {
         userId,
         container,
         audio,
         label,
-        sourceNode,
-        gainNode,
+        sourceNode: null,
+        gainNode: null,
+        streamId: null,
       };
       remoteAudioMap.set(key, existing);
+    }
+
+    const nextStreamId = getStreamId(stream);
+    if (existing.streamId && existing.streamId !== nextStreamId) {
+      disconnectRemoteAudioGraphForEntry(existing);
     }
 
     existing.userId = userId;
     existing.label.textContent = labelText;
     existing.audio.srcObject = stream;
+    existing.streamId = nextStreamId;
+    ensureRemoteAudioGraphForEntry(existing);
     void existing.audio.play().catch(() => {
       // no-op
     });
@@ -472,18 +534,7 @@ export const createRemoteMediaUiController = (
 
     existing.audio.srcObject = null;
     existing.audio.pause();
-
-    try {
-      existing.sourceNode?.disconnect();
-    } catch {
-      // no-op
-    }
-
-    try {
-      existing.gainNode?.disconnect();
-    } catch {
-      // no-op
-    }
+    disconnectRemoteAudioGraphForEntry(existing);
 
     existing.container.remove();
     remoteAudioMap.delete(key);
