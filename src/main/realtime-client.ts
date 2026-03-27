@@ -27,8 +27,8 @@ export type RealtimeEvent =
   | { type: "system-error"; code: string; message: string }
   | { type: "rtc-signal"; payload: RtcSignalPayload };
 
-const STREAM_RECONNECT_BASE_DELAY_MS = 1000;
-const STREAM_RECONNECT_MAX_DELAY_MS = 15000;
+const SOCKET_RECONNECT_BASE_DELAY_MS = 1000;
+const SOCKET_RECONNECT_MAX_DELAY_MS = 15000;
 
 export class RealtimeClient {
   private connected = false;
@@ -37,8 +37,9 @@ export class RealtimeClient {
   private reconnectAttempts = 0;
   private token: string | null = null;
   private onEvent: ((event: RealtimeEvent) => void) | null = null;
-  private streamAbortController: AbortController | null = null;
+  private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSocketErrorDetail: string | null = null;
 
   public constructor(private readonly baseUrl: string) {}
 
@@ -47,7 +48,7 @@ export class RealtimeClient {
       type: "connection-metrics",
       latencyMs: null,
       packetLossPercent: 0,
-      transport: this.connected ? "livekit" : "none",
+      transport: this.connected ? "backend-livekit-ws" : "none",
       reconnectAttempts: this.reconnectAttempts,
       connected: this.connected,
     });
@@ -70,7 +71,7 @@ export class RealtimeClient {
     this.shouldRun = true;
 
     if ((this.connected || this.connecting) && tokenChanged) {
-      this.abortActiveStream();
+      this.closeActiveSocket(1000, "token-updated");
       this.connected = false;
       this.connecting = false;
       this.clearReconnectTimer();
@@ -84,17 +85,18 @@ export class RealtimeClient {
       return;
     }
 
-    void this.openLobbyStream();
+    this.openLobbySocket();
   }
 
   public disconnect(): void {
     const wasActive = this.connected || this.connecting;
     this.shouldRun = false;
     this.clearReconnectTimer();
-    this.abortActiveStream();
+    this.closeActiveSocket(1000, "client-disconnect");
     this.connecting = false;
     this.connected = false;
     this.token = null;
+    this.lastSocketErrorDetail = null;
 
     if (!wasActive) {
       this.onEvent = null;
@@ -138,7 +140,7 @@ export class RealtimeClient {
     return this.connected || this.connecting;
   }
 
-  private async openLobbyStream(): Promise<void> {
+  private openLobbySocket(): void {
     if (!this.shouldRun || this.connecting || this.token === null) {
       return;
     }
@@ -146,40 +148,14 @@ export class RealtimeClient {
     this.clearReconnectTimer();
     this.connecting = true;
 
-    const controller = new AbortController();
-    this.streamAbortController = controller;
+    const socketUrl = this.buildLobbySocketUrl(this.token);
+    const socket = new WebSocket(socketUrl);
+    this.socket = socket;
+    this.lastSocketErrorDetail = null;
 
-    try {
-      const response = await fetch(`${this.baseUrl}/lobby/stream`, {
-        method: "GET",
-        headers: {
-          Accept: "text/event-stream",
-          Authorization: `Bearer ${this.token}`,
-          "Cache-Control": "no-cache",
-        },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const statusDetail = `lobby stream baglanti hatasi (${response.status})`;
-        if (response.status === 401 || response.status === 403) {
-          this.shouldRun = false;
-          this.connected = false;
-          this.connecting = false;
-          this.onEvent?.({
-            type: "connection",
-            status: "error",
-            detail: statusDetail,
-          });
-          this.emitConnectionMetrics();
-          return;
-        }
-
-        throw new Error(statusDetail);
-      }
-
-      if (!response.body) {
-        throw new Error("lobby stream body bulunamadi");
+    socket.addEventListener("open", () => {
+      if (this.socket !== socket) {
+        return;
       }
 
       this.connecting = false;
@@ -188,22 +164,40 @@ export class RealtimeClient {
 
       this.onEvent?.({ type: "connection", status: "connected" });
       this.emitConnectionMetrics();
+    });
 
-      await this.consumeSseStream(response.body, controller.signal);
-
-      if (!controller.signal.aborted) {
-        throw new Error("lobby stream baglantisi kapandi");
-      }
-    } catch (error) {
-      if (controller.signal.aborted) {
+    socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) {
         return;
       }
 
-      const detail = error instanceof Error ? error.message : "bilinmeyen hata";
+      this.handleRawLobbySocketMessage(event.data);
+    });
+
+    socket.addEventListener("error", () => {
+      if (this.socket !== socket) {
+        return;
+      }
+
+      this.lastSocketErrorDetail = "lobby websocket baglantisi hataya dustu";
+    });
+
+    socket.addEventListener("close", (event) => {
+      if (this.socket !== socket) {
+        return;
+      }
+
+      this.socket = null;
+
       const wasConnected = this.connected;
       this.connected = false;
       this.connecting = false;
 
+      if (!this.shouldRun) {
+        return;
+      }
+
+      const detail = this.describeSocketClose(event);
       this.onEvent?.({
         type: "connection",
         status: wasConnected ? "disconnected" : "error",
@@ -212,82 +206,62 @@ export class RealtimeClient {
       this.emitConnectionMetrics();
 
       this.scheduleReconnect();
-    } finally {
-      if (this.streamAbortController === controller) {
-        this.streamAbortController = null;
-      }
-    }
+    });
   }
 
-  private async consumeSseStream(
-    stream: ReadableStream<Uint8Array>,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-
-    while (!signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-
-      while (true) {
-        const boundaryIndex = buffer.indexOf("\n\n");
-        if (boundaryIndex < 0) {
-          break;
-        }
-
-        const rawEvent = buffer.slice(0, boundaryIndex);
-        buffer = buffer.slice(boundaryIndex + 2);
-        this.handleRawSseEvent(rawEvent);
-      }
-    }
+  private buildLobbySocketUrl(token: string): string {
+    const parsedBase = new URL(this.baseUrl);
+    parsedBase.protocol = parsedBase.protocol === "https:" ? "wss:" : "ws:";
+    parsedBase.pathname = "/media/livekit/lobby/ws";
+    parsedBase.search = "";
+    parsedBase.searchParams.set("access_token", token);
+    return parsedBase.toString();
   }
 
-  private handleRawSseEvent(rawEvent: string): void {
-    if (!rawEvent || rawEvent.startsWith(":")) {
-      return;
+  private describeSocketClose(event: CloseEvent): string {
+    const reason = event.reason?.trim();
+    if (reason) {
+      return reason;
     }
 
-    let eventType = "message";
-    const dataLines: string[] = [];
-
-    for (const line of rawEvent.split("\n")) {
-      if (line.startsWith("event:")) {
-        eventType = line.slice("event:".length).trim();
-        continue;
-      }
-
-      if (line.startsWith("data:")) {
-        dataLines.push(line.slice("data:".length).trim());
-      }
+    if (this.lastSocketErrorDetail) {
+      return this.lastSocketErrorDetail;
     }
 
-    if (dataLines.length === 0) {
+    if (event.code > 0) {
+      return `lobby websocket kapandi (kod: ${event.code})`;
+    }
+
+    return "lobby websocket baglantisi kapandi";
+  }
+
+  private handleRawLobbySocketMessage(rawData: unknown): void {
+    if (typeof rawData !== "string" || rawData.trim() === "") {
       return;
     }
 
     let payload: unknown;
     try {
-      payload = JSON.parse(dataLines.join("\n"));
+      payload = JSON.parse(rawData);
     } catch {
       return;
     }
 
-    this.dispatchLobbyStreamEvent(eventType, payload);
+    this.dispatchLobbySocketEvent(payload);
   }
 
-  private dispatchLobbyStreamEvent(eventType: string, payload: unknown): void {
+  private dispatchLobbySocketEvent(payload: unknown): void {
     const source = payload as {
+      type?: string;
       members?: LobbyMember[];
       member?: LobbyMember;
       userId?: string;
       revision?: number;
+      code?: string;
+      message?: string;
     };
+
+    const eventType = typeof source.type === "string" ? source.type : "";
     const revision =
       typeof source.revision === "number" && Number.isFinite(source.revision)
         ? Math.max(0, Math.floor(source.revision))
@@ -301,6 +275,7 @@ export class RealtimeClient {
       if (revision !== undefined) {
         event.revision = revision;
       }
+
       this.onEvent?.(event);
       return;
     }
@@ -313,6 +288,7 @@ export class RealtimeClient {
       if (revision !== undefined) {
         event.revision = revision;
       }
+
       this.onEvent?.(event);
       return;
     }
@@ -325,6 +301,7 @@ export class RealtimeClient {
       if (revision !== undefined) {
         event.revision = revision;
       }
+
       this.onEvent?.(event);
       return;
     }
@@ -340,8 +317,23 @@ export class RealtimeClient {
       if (revision !== undefined) {
         event.revision = revision;
       }
+
       this.onEvent?.(event);
       return;
+    }
+
+    if (eventType === "system-error") {
+      this.onEvent?.({
+        type: "system-error",
+        code:
+          typeof source.code === "string" && source.code.length > 0
+            ? source.code
+            : "LIVEKIT_STREAM_ERROR",
+        message:
+          typeof source.message === "string" && source.message.length > 0
+            ? source.message
+            : "LiveKit stream error",
+      });
     }
   }
 
@@ -355,16 +347,16 @@ export class RealtimeClient {
     this.emitConnectionMetrics();
 
     const exponentialDelay =
-      STREAM_RECONNECT_BASE_DELAY_MS *
+      SOCKET_RECONNECT_BASE_DELAY_MS *
       Math.pow(2, Math.min(this.reconnectAttempts - 1, 4));
     const reconnectDelay = Math.min(
       exponentialDelay,
-      STREAM_RECONNECT_MAX_DELAY_MS,
+      SOCKET_RECONNECT_MAX_DELAY_MS,
     );
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.openLobbyStream();
+      this.openLobbySocket();
     }, reconnectDelay);
   }
 
@@ -375,12 +367,18 @@ export class RealtimeClient {
     }
   }
 
-  private abortActiveStream(): void {
-    if (!this.streamAbortController) {
+  private closeActiveSocket(code: number, reason: string): void {
+    if (!this.socket) {
       return;
     }
 
-    this.streamAbortController.abort();
-    this.streamAbortController = null;
+    const socket = this.socket;
+    this.socket = null;
+
+    try {
+      socket.close(code, reason);
+    } catch {
+      // no-op
+    }
   }
 }

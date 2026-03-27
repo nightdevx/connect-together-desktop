@@ -137,7 +137,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let isHeadphoneMuted = false;
   let isSpeaking = false;
   let voiceConnected = false;
-  let liveKitLobbyStateActive = false;
   let cameraSharing = false;
   let screenSharing = false;
   let realtimeConnectionStatus: "connected" | "disconnected" | "error" =
@@ -840,6 +839,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     directoryController.renderUserDirectory();
   };
 
+  const applySelfLobbyRealtimeOverrides = (
+    member: LobbyMemberSnapshot,
+  ): LobbyMemberSnapshot => {
+    if (!selfUserId || member.userId !== selfUserId) {
+      return member;
+    }
+
+    return {
+      ...member,
+      muted: isMuted,
+      deafened: isHeadphoneMuted,
+      speaking: isMuted ? false : isSpeaking,
+    };
+  };
+
   const syncSpeakingState = async (speaking: boolean): Promise<void> => {
     if (!voiceConnected) {
       return;
@@ -870,7 +884,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       lobbyController.clearLobby();
       latestLobbyRevision = 0;
       resetRemoteMediaAnnouncementState();
-      liveKitLobbyStateActive = false;
       voiceController.cleanupForLobbyExit();
       stopAllShareTests();
       voiceConnected = false;
@@ -919,49 +932,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     getLobbyMembers: () => lobbyController.getMembersMap(),
     resolveMemberName: (userId: string) =>
       lobbyController.resolveMemberName(userId),
-    onLiveKitLobbySnapshot: (members) => {
-      liveKitLobbyStateActive = true;
-      syncRemoteMediaAnnouncements(members);
-      const currentMemberMap = lobbyController.getMembersMap();
-      const mergedMembersByUserId = new Map<string, LobbyMemberSnapshot>();
-      for (const existingMember of currentMemberMap.values()) {
-        mergedMembersByUserId.set(existingMember.userId, existingMember);
-      }
-
-      for (const member of members) {
-        const current = currentMemberMap.get(member.userId);
-        if (!current) {
-          mergedMembersByUserId.set(member.userId, member);
-          continue;
-        }
-
-        const muted = current.muted;
-        const deafened = current.deafened;
-        mergedMembersByUserId.set(member.userId, {
-          ...member,
-          muted,
-          deafened,
-          speaking: muted ? false : member.speaking,
-        });
-      }
-
-      const mergedMembers = Array.from(mergedMembersByUserId.values()).sort(
-        (a, b) => a.joinedAt.localeCompare(b.joinedAt),
-      );
-
-      lobbyController.renderLobby({
-        members: mergedMembers,
-        size: mergedMembers.length,
-      });
-      directoryController.renderUserDirectory();
-      void voiceController.onLobbyUpdated();
-    },
     onConnectionMetrics: ({ latencyMs, packetLossPercent, connected }) => {
       realtimeLatencyMs = connected ? latencyMs : null;
       realtimePacketLossPercent = connected
         ? Math.max(0, Math.min(100, packetLossPercent))
         : 0;
-      realtimeTransport = connected ? "livekit" : realtimeTransport;
       realtimeReconnectAttempts = 0;
 
       if (!connected) {
@@ -1532,11 +1507,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const refreshLobby = async (silent = false): Promise<void> => {
-    const result = await window.desktopApi.getLobbyState();
-    if (!result.ok || !result.data) {
+    const result = await window.desktopApi.realtimeConnect();
+    if (!result.ok) {
       if (!silent) {
         setStatus(
-          `Lobi bilgisi alınamadı: ${getErrorMessage(result.error)}`,
+          `Lobi realtime bağlantısı kurulamadı: ${getErrorMessage(result.error)}`,
           true,
         );
       }
@@ -1546,16 +1521,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    if (!shouldApplyLobbyRevision(result.data.revision)) {
-      return;
-    }
-
-    syncRemoteMediaAnnouncements(result.data.members);
-    lobbyController.renderLobby(result.data);
-    directoryController.renderUserDirectory();
-    await voiceController.onLobbyUpdated();
     if (!silent) {
-      setStatus("Lobi yenilendi", false);
+      setStatus("Lobi güncellemeleri websocket üzerinden alınıyor", false);
     }
   };
   const connectToChat = async (): Promise<boolean> => {
@@ -1615,7 +1582,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const disconnectFromChat = async (): Promise<boolean> => {
     await voiceController.stopVoice();
     isSpeaking = false;
-    liveKitLobbyStateActive = false;
 
     const muteResult = await window.desktopApi.lobbyMute(true);
     if (!muteResult.ok && muteResult.error?.statusCode !== 404) {
@@ -1722,7 +1688,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
       if (status === "disconnected") {
         realtimeConnectionStatus = "disconnected";
-        liveKitLobbyStateActive = false;
         realtimeLatencyMs = null;
         realtimePacketLossPercent = 0;
         latencySamplesMs.length = 0;
@@ -1744,7 +1709,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       }
 
       realtimeConnectionStatus = "error";
-      liveKitLobbyStateActive = false;
       realtimeLatencyMs = null;
       realtimePacketLossPercent = 0;
       latencySamplesMs.length = 0;
@@ -1779,9 +1743,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         return;
       }
 
-      liveKitLobbyStateActive = false;
-      syncRemoteMediaAnnouncements(members);
-      lobbyController.renderLobby({ members, size: members.length });
+      const normalizedMembers = members.map((member) =>
+        applySelfLobbyRealtimeOverrides(member),
+      );
+
+      syncRemoteMediaAnnouncements(normalizedMembers);
+      lobbyController.renderLobby({
+        members: normalizedMembers,
+        size: normalizedMembers.length,
+      });
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
@@ -1790,22 +1760,24 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         return;
       }
 
+      const normalizedMember = applySelfLobbyRealtimeOverrides(member);
+
       setStatus("Lobiye bir üye katıldı", false);
 
       const selfId = authController.getSelfUserId();
       if (
         remoteMediaAnnouncementInitialized &&
-        member.userId !== selfId &&
-        (member.cameraEnabled || member.screenSharing)
+        normalizedMember.userId !== selfId &&
+        (normalizedMember.cameraEnabled || normalizedMember.screenSharing)
       ) {
         uiSoundController.play("participant-share-on");
       }
 
-      remoteMediaStateByUserId.set(member.userId, {
-        cameraEnabled: member.cameraEnabled === true,
-        screenSharing: member.screenSharing === true,
+      remoteMediaStateByUserId.set(normalizedMember.userId, {
+        cameraEnabled: normalizedMember.cameraEnabled === true,
+        screenSharing: normalizedMember.screenSharing === true,
       });
-      lobbyController.addOrUpdateMember(member);
+      lobbyController.addOrUpdateMember(normalizedMember);
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
@@ -1814,11 +1786,13 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         return;
       }
 
-      remoteMediaStateByUserId.set(member.userId, {
-        cameraEnabled: member.cameraEnabled === true,
-        screenSharing: member.screenSharing === true,
+      const normalizedMember = applySelfLobbyRealtimeOverrides(member);
+
+      remoteMediaStateByUserId.set(normalizedMember.userId, {
+        cameraEnabled: normalizedMember.cameraEnabled === true,
+        screenSharing: normalizedMember.screenSharing === true,
       });
-      lobbyController.addOrUpdateMember(member);
+      lobbyController.addOrUpdateMember(normalizedMember);
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
