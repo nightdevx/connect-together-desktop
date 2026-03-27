@@ -130,11 +130,14 @@ export const createRemoteMediaUiController = (
       return;
     }
 
-    void context.resume().then(() => {
-      applyRemoteAudioStateToAllEntries();
-    }).catch(() => {
-      // no-op
-    });
+    void context
+      .resume()
+      .then(() => {
+        applyRemoteAudioStateToAllEntries();
+      })
+      .catch(() => {
+        // no-op
+      });
   };
 
   const applyRemoteAudioStateToEntry = (entry: RemoteAudioEntry): void => {
