@@ -7,6 +7,8 @@ import type { DomRefs } from "../../ui/dom";
 export interface LobbyController {
   getMembersMap: () => Map<string, LobbyMemberSnapshot>;
   resolveMemberName: (userId: string) => string;
+  getDisplayNameMap: () => Map<string, string>;
+  setDisplayNameMap: (displayNames: Map<string, string>) => void;
   renderLobby: (lobby: LobbyStateSnapshot) => void;
   addOrUpdateMember: (member: LobbyMemberSnapshot) => void;
   removeMember: (userId: string) => void;
@@ -15,6 +17,16 @@ export interface LobbyController {
 
 export const createLobbyController = (dom: DomRefs): LobbyController => {
   const lobbyMemberMap = new Map<string, LobbyMemberSnapshot>();
+  const displayNameByUserId = new Map<string, string>();
+
+  const resolveDisplayName = (userId: string, fallback: string): string => {
+    const mapped = displayNameByUserId.get(userId)?.trim();
+    if (mapped && mapped.length > 0) {
+      return mapped;
+    }
+
+    return fallback;
+  };
 
   const createStatusIcon = (
     type: "mic" | "headphone",
@@ -82,7 +94,8 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
     mediaSlot.className = "participant-media-slot";
     mediaSlot.dataset.participantMediaSlot = slotKey;
 
-    const mediaPlaceholder = createMediaPlaceholder(member.username);
+    const displayName = resolveDisplayName(member.userId, member.username);
+    const mediaPlaceholder = createMediaPlaceholder(displayName);
     mediaSlot.appendChild(mediaPlaceholder);
 
     const cardFooter = document.createElement("div");
@@ -90,7 +103,7 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
 
     const cardName = document.createElement("div");
     cardName.className = "participant-card-name";
-    cardName.textContent = member.username;
+    cardName.textContent = displayName;
     cardFooter.appendChild(cardName);
 
     if (showPresence) {
@@ -136,11 +149,13 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
 
       const avatar = document.createElement("div");
       avatar.className = "avatar w-7 h-7 rounded-lg text-xs flex-shrink-0";
-      avatar.textContent = getInitials(member.username);
+      const displayName = resolveDisplayName(member.userId, member.username);
+
+      avatar.textContent = getInitials(displayName);
 
       const name = document.createElement("span");
       name.className = "text-sm font-medium text-text-primary truncate";
-      name.textContent = member.username;
+      name.textContent = displayName;
 
       const presence = document.createElement("span");
       presence.className = "flex items-center gap-1.5 flex-shrink-0";
@@ -211,12 +226,24 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
 
   const resolveMemberName = (userId: string): string => {
     const member = lobbyMemberMap.get(userId);
-    return member ? member.username : userId;
+    return member ? resolveDisplayName(userId, member.username) : userId;
   };
 
   return {
     getMembersMap: () => lobbyMemberMap,
     resolveMemberName,
+    getDisplayNameMap: () => new Map(displayNameByUserId),
+    setDisplayNameMap: (displayNames) => {
+      displayNameByUserId.clear();
+      for (const [userId, displayName] of displayNames.entries()) {
+        const normalized = displayName.trim();
+        if (normalized.length === 0) {
+          continue;
+        }
+        displayNameByUserId.set(userId, normalized);
+      }
+      renderFromMap();
+    },
     renderLobby,
     addOrUpdateMember,
     removeMember,

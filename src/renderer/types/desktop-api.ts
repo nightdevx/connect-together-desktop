@@ -40,6 +40,7 @@ export interface LobbyMemberSnapshot {
 export interface LobbyStateSnapshot {
   members: LobbyMemberSnapshot[];
   size: number;
+  revision?: number;
 }
 
 export interface RegisteredUserSnapshot {
@@ -91,6 +92,7 @@ export interface DesktopUpdateState {
 
 export interface DesktopRealtimeEvent {
   type: string;
+  revision?: number;
   status?: string;
   detail?: string;
   latencyMs?: number | null;

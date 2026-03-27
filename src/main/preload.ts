@@ -363,6 +363,7 @@ const desktopApi: DesktopApi = {
       handler(
         payload as {
           type: string;
+          revision?: number;
           status?: string;
           detail?: string;
           latencyMs?: number | null;

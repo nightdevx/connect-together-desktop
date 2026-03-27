@@ -130,6 +130,9 @@ export const registerDesktopIpcHandlers = (
 
       const refreshed = await deps.backendClient.refresh(current.refreshToken);
       persistAuthResult(refreshed);
+      if (deps.realtimeClient.isConnectedOrConnecting()) {
+        connectRealtimeForCurrentSession();
+      }
       return operation(refreshed.tokens.accessToken);
     }
   };
@@ -152,7 +155,6 @@ export const registerDesktopIpcHandlers = (
         event.status === "connected" &&
         shouldAutoJoinLobby
       ) {
-        deps.realtimeClient.joinLobby();
         deps.emitRealtimeEvent({
           type: "lobby:auto-rejoin",
           message: "Bağlantı sonrası lobi üyeliği geri yüklendi",

@@ -58,7 +58,6 @@ export const registerLobbyIpcHandlers = (
       const backendJoin = await helpers.withAccessToken(async (accessToken) => {
         return deps.backendClient.joinLobby(accessToken);
       });
-      deps.realtimeClient.joinLobby();
       return helpers.ok({ accepted: backendJoin.accepted === true });
     } catch (error) {
       helpers.setAutoJoinLobbyEnabled(false);
@@ -87,9 +86,6 @@ export const registerLobbyIpcHandlers = (
         }
       }
 
-      if (deps.realtimeClient.isConnected()) {
-        deps.realtimeClient.leaveLobby();
-      }
       return helpers.ok({ accepted: backendAccepted });
     } catch (error) {
       return helpers.fail(error);

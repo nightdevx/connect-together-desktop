@@ -7,6 +7,10 @@ interface RemoteAudioEntry {
   audio: HTMLAudioElement;
   label: HTMLDivElement;
   sourceNode: MediaStreamAudioSourceNode | null;
+  splitterNode: ChannelSplitterNode | null;
+  leftMixGainNode: GainNode | null;
+  rightMixGainNode: GainNode | null;
+  mergerNode: ChannelMergerNode | null;
   gainNode: GainNode | null;
   streamId: string | null;
 }
@@ -93,12 +97,40 @@ export const createRemoteMediaUiController = (
     }
 
     try {
+      entry.splitterNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    try {
+      entry.leftMixGainNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    try {
+      entry.rightMixGainNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    try {
+      entry.mergerNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    try {
       entry.gainNode?.disconnect();
     } catch {
       // no-op
     }
 
     entry.sourceNode = null;
+    entry.splitterNode = null;
+    entry.leftMixGainNode = null;
+    entry.rightMixGainNode = null;
+    entry.mergerNode = null;
     entry.gainNode = null;
     entry.streamId = null;
   };
@@ -171,10 +203,33 @@ export const createRemoteMediaUiController = (
 
     try {
       const sourceNode = audioContext.createMediaStreamSource(stream);
+      const splitterNode = audioContext.createChannelSplitter(2);
+      const leftMixGainNode = audioContext.createGain();
+      const rightMixGainNode = audioContext.createGain();
+      const mergerNode = audioContext.createChannelMerger(2);
       const gainNode = audioContext.createGain();
-      sourceNode.connect(gainNode);
+
+      // Force dual-mono output to prevent one-sided playback on some devices.
+      leftMixGainNode.gain.value = 0.5;
+      rightMixGainNode.gain.value = 0.5;
+
+      sourceNode.connect(splitterNode);
+      splitterNode.connect(leftMixGainNode, 0);
+      splitterNode.connect(rightMixGainNode, 1);
+
+      leftMixGainNode.connect(mergerNode, 0, 0);
+      leftMixGainNode.connect(mergerNode, 0, 1);
+      rightMixGainNode.connect(mergerNode, 0, 0);
+      rightMixGainNode.connect(mergerNode, 0, 1);
+
+      mergerNode.connect(gainNode);
       gainNode.connect(audioContext.destination);
+
       entry.sourceNode = sourceNode;
+      entry.splitterNode = splitterNode;
+      entry.leftMixGainNode = leftMixGainNode;
+      entry.rightMixGainNode = rightMixGainNode;
+      entry.mergerNode = mergerNode;
       entry.gainNode = gainNode;
       entry.streamId = nextStreamId;
     } catch {
@@ -441,6 +496,10 @@ export const createRemoteMediaUiController = (
         audio,
         label,
         sourceNode: null,
+        splitterNode: null,
+        leftMixGainNode: null,
+        rightMixGainNode: null,
+        mergerNode: null,
         gainNode: null,
         streamId: null,
       };

@@ -39,6 +39,7 @@ export interface LobbyStateResponse {
     screenProducerId: string | null;
   }>;
   size: number;
+  revision?: number;
 }
 
 export interface LobbyActionResponse {

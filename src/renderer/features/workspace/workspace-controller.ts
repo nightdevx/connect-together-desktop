@@ -2,7 +2,13 @@ import type { DesktopApi, DesktopPreferences } from "../../types/desktop-api";
 import type { DomRefs } from "../../ui/dom";
 
 type WorkspacePage = "users" | "lobby" | "settings";
-type SettingsTab = "profile" | "security" | "voice" | "session";
+type SettingsTab =
+  | "profile"
+  | "security"
+  | "voice"
+  | "camera"
+  | "broadcast"
+  | "session";
 
 interface WorkspaceControllerDeps {
   dom: DomRefs;
@@ -39,11 +45,15 @@ export const createWorkspaceController = (
     dom.settingsTabProfile.classList.toggle("active", tab === "profile");
     dom.settingsTabSecurity.classList.toggle("active", tab === "security");
     dom.settingsTabVoice.classList.toggle("active", tab === "voice");
+    dom.settingsTabCamera.classList.toggle("active", tab === "camera");
+    dom.settingsTabBroadcast.classList.toggle("active", tab === "broadcast");
     dom.settingsTabSession.classList.toggle("active", tab === "session");
 
     dom.settingsPanelProfile.classList.toggle("hidden", tab !== "profile");
     dom.settingsPanelSecurity.classList.toggle("hidden", tab !== "security");
     dom.settingsPanelVoice.classList.toggle("hidden", tab !== "voice");
+    dom.settingsPanelCamera.classList.toggle("hidden", tab !== "camera");
+    dom.settingsPanelBroadcast.classList.toggle("hidden", tab !== "broadcast");
     dom.settingsPanelSession.classList.toggle("hidden", tab !== "session");
 
     if (deps.onSettingsTabChanged) {
@@ -177,6 +187,14 @@ export const createWorkspaceController = (
 
     dom.settingsTabVoice.addEventListener("click", () => {
       setSettingsTab("voice");
+    });
+
+    dom.settingsTabCamera.addEventListener("click", () => {
+      setSettingsTab("camera");
+    });
+
+    dom.settingsTabBroadcast.addEventListener("click", () => {
+      setSettingsTab("broadcast");
     });
 
     dom.settingsTabSession.addEventListener("click", () => {

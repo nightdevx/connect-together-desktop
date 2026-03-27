@@ -4,6 +4,25 @@ import dotenv from "dotenv";
 
 import type { DesktopRtcConfig } from "./types";
 
+const isDevelopmentRuntime = (): boolean => {
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
+  return Boolean(devServerUrl) || nodeEnv === "development";
+};
+
+const resolveExplicitEnvFilePath = (): string | undefined => {
+  const rawValue = process.env.CT_ENV_FILE?.trim();
+  if (!rawValue) {
+    return undefined;
+  }
+
+  if (path.isAbsolute(rawValue)) {
+    return rawValue;
+  }
+
+  return path.join(process.cwd(), rawValue);
+};
+
 const resolveEnvCandidates = (): string[] => {
   const candidates: string[] = [];
   const pushUnique = (value: string | undefined) => {
@@ -16,6 +35,16 @@ const resolveEnvCandidates = (): string[] => {
       candidates.push(normalized);
     }
   };
+
+  // Allow explicit override for env file selection.
+  pushUnique(resolveExplicitEnvFilePath());
+
+  if (isDevelopmentRuntime()) {
+    // Dev build output: dist/main -> project root is two levels up.
+    pushUnique(path.join(__dirname, "../../.env.development"));
+    // Support running from workspace root in development.
+    pushUnique(path.join(process.cwd(), ".env.development"));
+  }
 
   // Dev build output: dist/main -> project root is two levels up.
   pushUnique(path.join(__dirname, "../../.env"));

@@ -26,7 +26,13 @@ const getErrorMessage = (error?: { message?: string }): string => {
   return error?.message ?? "bilinmeyen hata";
 };
 
-type SettingsTab = "profile" | "security" | "voice" | "session";
+type SettingsTab =
+  | "profile"
+  | "security"
+  | "voice"
+  | "camera"
+  | "broadcast"
+  | "session";
 type SpeakingDetectionMode = "auto" | "manual";
 const UI_SOUNDS_STORAGE_KEY = "ct.desktop.ui-sounds-enabled";
 const RNNOISE_ENABLED_STORAGE_KEY = "ct.desktop.rnnoise-enabled";
@@ -140,12 +146,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let realtimePacketLossPercent = 0;
   let realtimeTransport = "unknown";
   let realtimeReconnectAttempts = 0;
+  let latestLobbyRevision = 0;
   let voiceJoinLatencyMs: number | null = null;
   const latencySamplesMs: number[] = [];
   let selfUserId: string | null = null;
-  let registeredUsers: RegisteredUserSnapshot[] = [];
-  let friendsPresenceRefreshTimer: number | null = null;
-  let usersDirectoryRefreshTimer: number | null = null;
   const uiSoundController = createUiSoundController();
   let activeWorkspacePage: "users" | "lobby" | "settings" = "lobby";
   let activeSettingsTab: SettingsTab = "profile";
@@ -169,6 +173,12 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let participantAudioSettings = new Map<string, ParticipantAudioSetting>();
   let participantAudioMenuUserId: string | null = null;
   let latestDesktopUpdateState: DesktopUpdateState | null = null;
+  const displayNameByUserId = new Map<string, string>();
+  let remoteMediaAnnouncementInitialized = false;
+  const remoteMediaStateByUserId = new Map<
+    string,
+    { cameraEnabled: boolean; screenSharing: boolean }
+  >();
 
   try {
     uiSoundsEnabled = localStorage.getItem(UI_SOUNDS_STORAGE_KEY) !== "0";
@@ -238,6 +248,77 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.status.dataset.tone = isError ? "error" : "ok";
   };
 
+  const shouldApplyLobbyRevision = (revision?: number): boolean => {
+    if (typeof revision !== "number" || !Number.isFinite(revision)) {
+      return true;
+    }
+
+    const normalized = Math.max(0, Math.floor(revision));
+    if (normalized < latestLobbyRevision) {
+      return false;
+    }
+
+    latestLobbyRevision = normalized;
+    return true;
+  };
+
+  const resetRemoteMediaAnnouncementState = (): void => {
+    remoteMediaAnnouncementInitialized = false;
+    remoteMediaStateByUserId.clear();
+  };
+
+  const syncRemoteMediaAnnouncements = (
+    members: LobbyMemberSnapshot[],
+  ): void => {
+    const selfId = authController.getSelfUserId();
+    const nextState = new Map<
+      string,
+      { cameraEnabled: boolean; screenSharing: boolean }
+    >();
+    let shouldPlayAnnouncement = false;
+
+    for (const member of members) {
+      const nextMemberState = {
+        cameraEnabled: member.cameraEnabled === true,
+        screenSharing: member.screenSharing === true,
+      };
+      nextState.set(member.userId, nextMemberState);
+
+      if (member.userId === selfId || !remoteMediaAnnouncementInitialized) {
+        continue;
+      }
+
+      const previous = remoteMediaStateByUserId.get(member.userId);
+      if (!previous) {
+        if (nextMemberState.cameraEnabled || nextMemberState.screenSharing) {
+          shouldPlayAnnouncement = true;
+        }
+        continue;
+      }
+
+      if (
+        (!previous.cameraEnabled && nextMemberState.cameraEnabled) ||
+        (!previous.screenSharing && nextMemberState.screenSharing)
+      ) {
+        shouldPlayAnnouncement = true;
+      }
+    }
+
+    remoteMediaStateByUserId.clear();
+    for (const [userId, state] of nextState.entries()) {
+      remoteMediaStateByUserId.set(userId, state);
+    }
+
+    if (!remoteMediaAnnouncementInitialized) {
+      remoteMediaAnnouncementInitialized = true;
+      return;
+    }
+
+    if (shouldPlayAnnouncement) {
+      uiSoundController.play("participant-share-on");
+    }
+  };
+
   const updaterController = createUpdaterViewController({
     dom,
     desktopApi,
@@ -258,8 +339,30 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   });
 
   const lobbyController = createLobbyController(dom);
-  let refreshLobbyForDirectory: ((silent?: boolean) => Promise<void>) | null =
-    null;
+  const syncDisplayNameMapFromUsers = (
+    users: RegisteredUserSnapshot[],
+  ): void => {
+    displayNameByUserId.clear();
+    for (const user of users) {
+      const displayName = user.displayName.trim();
+      if (displayName.length > 0) {
+        displayNameByUserId.set(user.userId, displayName);
+      }
+    }
+
+    lobbyController.setDisplayNameMap(displayNameByUserId);
+  };
+
+  const applyLocalDisplayName = (userId: string, displayName: string): void => {
+    const normalized = displayName.trim();
+    if (normalized.length === 0) {
+      displayNameByUserId.delete(userId);
+    } else {
+      displayNameByUserId.set(userId, normalized);
+    }
+
+    lobbyController.setDisplayNameMap(displayNameByUserId);
+  };
 
   const directoryController = createDirectoryController({
     dom,
@@ -268,10 +371,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     getSelfUserId: () => selfUserId,
     setStatus,
     getErrorMessage,
-    refreshLobby: async (silent = true) => {
-      if (refreshLobbyForDirectory) {
-        await refreshLobbyForDirectory(silent);
-      }
+    onUsersRefreshed: (users) => {
+      syncDisplayNameMapFromUsers(users);
+      void voiceController.onLobbyUpdated();
     },
   });
 
@@ -308,11 +410,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.settingsTabProfile.classList.toggle("active", tab === "profile");
     dom.settingsTabSecurity.classList.toggle("active", tab === "security");
     dom.settingsTabVoice.classList.toggle("active", tab === "voice");
+    dom.settingsTabCamera.classList.toggle("active", tab === "camera");
+    dom.settingsTabBroadcast.classList.toggle("active", tab === "broadcast");
     dom.settingsTabSession.classList.toggle("active", tab === "session");
 
     dom.settingsPanelProfile.classList.toggle("hidden", tab !== "profile");
     dom.settingsPanelSecurity.classList.toggle("hidden", tab !== "security");
     dom.settingsPanelVoice.classList.toggle("hidden", tab !== "voice");
+    dom.settingsPanelCamera.classList.toggle("hidden", tab !== "camera");
+    dom.settingsPanelBroadcast.classList.toggle("hidden", tab !== "broadcast");
     dom.settingsPanelSession.classList.toggle("hidden", tab !== "session");
   };
 
@@ -757,9 +863,13 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       closeParticipantAudioMenu();
       directoryController.stopFriendsPresenceAutoRefresh();
       selfUserId = null;
+      displayNameByUserId.clear();
+      lobbyController.setDisplayNameMap(displayNameByUserId);
       directoryController.clearUsers();
       directoryController.renderUserDirectory();
       lobbyController.clearLobby();
+      latestLobbyRevision = 0;
+      resetRemoteMediaAnnouncementState();
       liveKitLobbyStateActive = false;
       voiceController.cleanupForLobbyExit();
       stopAllShareTests();
@@ -811,22 +921,33 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       lobbyController.resolveMemberName(userId),
     onLiveKitLobbySnapshot: (members) => {
       liveKitLobbyStateActive = true;
+      syncRemoteMediaAnnouncements(members);
       const currentMemberMap = lobbyController.getMembersMap();
-      const mergedMembers = members.map((member) => {
+      const mergedMembersByUserId = new Map<string, LobbyMemberSnapshot>();
+      for (const existingMember of currentMemberMap.values()) {
+        mergedMembersByUserId.set(existingMember.userId, existingMember);
+      }
+
+      for (const member of members) {
         const current = currentMemberMap.get(member.userId);
         if (!current) {
-          return member;
+          mergedMembersByUserId.set(member.userId, member);
+          continue;
         }
 
         const muted = current.muted;
         const deafened = current.deafened;
-        return {
+        mergedMembersByUserId.set(member.userId, {
           ...member,
           muted,
           deafened,
           speaking: muted ? false : member.speaking,
-        };
-      });
+        });
+      }
+
+      const mergedMembers = Array.from(mergedMembersByUserId.values()).sort(
+        (a, b) => a.joinedAt.localeCompare(b.joinedAt),
+      );
 
       lobbyController.renderLobby({
         members: mergedMembers,
@@ -1382,6 +1503,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.profileEmail.value = profile.email ?? "";
     dom.profileBio.value = profile.bio ?? "";
     dom.currentUser.textContent = profile.displayName;
+    if (selfUserId) {
+      applyLocalDisplayName(selfUserId, profile.displayName);
+      void voiceController.onLobbyUpdated();
+    }
   };
 
   const connectRealtimeAndJoin = async (): Promise<boolean> => {
@@ -1421,6 +1546,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
+    if (!shouldApplyLobbyRevision(result.data.revision)) {
+      return;
+    }
+
+    syncRemoteMediaAnnouncements(result.data.members);
     lobbyController.renderLobby(result.data);
     directoryController.renderUserDirectory();
     await voiceController.onLobbyUpdated();
@@ -1428,8 +1558,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       setStatus("Lobi yenilendi", false);
     }
   };
-  refreshLobbyForDirectory = refreshLobby;
-
   const connectToChat = async (): Promise<boolean> => {
     const joinStartedAt = performance.now();
 
@@ -1507,6 +1635,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     voiceController.cleanupForLobbyExit();
+    resetRemoteMediaAnnouncementState();
     stopAllShareTests();
     isMuted = true;
     updateMuteButton();
@@ -1584,6 +1713,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const unsubscribeRealtime = subscribeRealtimeEvents({
     onConnection: (status, detail) => {
       if (status === "connected") {
+        latestLobbyRevision = 0;
         realtimeConnectionStatus = "connected";
         setConnectionState("Realtime bağlı", "ok");
         diagnosticsController.updateConnectionDiagnostics();
@@ -1601,6 +1731,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
           setStatus(`Realtime bağlantısı kesildi: ${detail}`, true);
         }
         voiceController.cleanupForLobbyExit();
+        resetRemoteMediaAnnouncementState();
         stopAllShareTests();
         voiceConnected = false;
         cameraSharing = false;
@@ -1619,6 +1750,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       latencySamplesMs.length = 0;
       setConnectionState("Realtime hatası", "error");
       setStatus(`Realtime hatası: ${detail || "bilinmeyen hata"}`, true);
+      resetRemoteMediaAnnouncementState();
       diagnosticsController.updateConnectionDiagnostics();
     },
     onConnectionMetrics: (payload) => {
@@ -1642,20 +1774,61 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
       diagnosticsController.updateConnectionDiagnostics();
     },
-    onLobbyState: (members) => {
+    onLobbyState: (members, revision) => {
+      if (!shouldApplyLobbyRevision(revision)) {
+        return;
+      }
+
       liveKitLobbyStateActive = false;
+      syncRemoteMediaAnnouncements(members);
       lobbyController.renderLobby({ members, size: members.length });
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
-    onMemberJoined: (member) => {
+    onMemberJoined: (member, revision) => {
+      if (!shouldApplyLobbyRevision(revision)) {
+        return;
+      }
+
       setStatus("Lobiye bir üye katıldı", false);
+
+      const selfId = authController.getSelfUserId();
+      if (
+        remoteMediaAnnouncementInitialized &&
+        member.userId !== selfId &&
+        (member.cameraEnabled || member.screenSharing)
+      ) {
+        uiSoundController.play("participant-share-on");
+      }
+
+      remoteMediaStateByUserId.set(member.userId, {
+        cameraEnabled: member.cameraEnabled === true,
+        screenSharing: member.screenSharing === true,
+      });
       lobbyController.addOrUpdateMember(member);
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
-    onMemberLeft: (userId) => {
+    onMemberUpdated: (member, revision) => {
+      if (!shouldApplyLobbyRevision(revision)) {
+        return;
+      }
+
+      remoteMediaStateByUserId.set(member.userId, {
+        cameraEnabled: member.cameraEnabled === true,
+        screenSharing: member.screenSharing === true,
+      });
+      lobbyController.addOrUpdateMember(member);
+      directoryController.renderUserDirectory();
+      void voiceController.onLobbyUpdated();
+    },
+    onMemberLeft: (userId, revision) => {
+      if (!shouldApplyLobbyRevision(revision)) {
+        return;
+      }
+
       setStatus("Bir üye lobiden ayrıldı", false);
+      remoteMediaStateByUserId.delete(userId);
       lobbyController.removeMember(userId);
       directoryController.renderUserDirectory();
       voiceController.onMemberLeft(userId);
@@ -1781,6 +1954,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   dom.settingsTabVoice.addEventListener("click", () => {
     workspaceController.setSettingsTab("voice");
+  });
+
+  dom.settingsTabCamera.addEventListener("click", () => {
+    workspaceController.setSettingsTab("camera");
+  });
+
+  dom.settingsTabBroadcast.addEventListener("click", () => {
+    workspaceController.setSettingsTab("broadcast");
   });
 
   dom.settingsTabSession.addEventListener("click", () => {
@@ -2178,6 +2359,12 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     dom.currentUser.textContent = result.data.profile.displayName;
+    if (selfUserId) {
+      applyLocalDisplayName(selfUserId, result.data.profile.displayName);
+      directoryController.renderUserDirectory();
+      void voiceController.onLobbyUpdated();
+    }
+    await directoryController.refreshRegisteredUsers(true);
     setStatus("Profil bilgileri güncellendi", false);
   });
 
@@ -2279,6 +2466,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     voiceController.cleanupForLobbyExit();
+    resetRemoteMediaAnnouncementState();
     stopAllShareTests();
     voiceConnected = false;
     cameraSharing = false;
@@ -2289,6 +2477,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     directoryController.stopFriendsPresenceAutoRefresh();
     authController.renderSession(result.data);
     selfUserId = null;
+    displayNameByUserId.clear();
+    lobbyController.setDisplayNameMap(displayNameByUserId);
     directoryController.clearUsers();
     closeParticipantAudioMenu();
     directoryController.renderUserDirectory();

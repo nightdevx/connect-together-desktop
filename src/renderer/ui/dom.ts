@@ -17,10 +17,14 @@ export interface DomRefs {
   settingsTabProfile: HTMLButtonElement;
   settingsTabSecurity: HTMLButtonElement;
   settingsTabVoice: HTMLButtonElement;
+  settingsTabCamera: HTMLButtonElement;
+  settingsTabBroadcast: HTMLButtonElement;
   settingsTabSession: HTMLButtonElement;
   settingsPanelProfile: HTMLElement;
   settingsPanelSecurity: HTMLElement;
   settingsPanelVoice: HTMLElement;
+  settingsPanelCamera: HTMLElement;
+  settingsPanelBroadcast: HTMLElement;
   settingsPanelSession: HTMLElement;
   version: HTMLElement;
   updateHint: HTMLElement;
@@ -160,10 +164,16 @@ export const queryDomRefs = (): DomRefs => {
       "settingsTabSecurity",
     ),
     settingsTabVoice: requireElement<HTMLButtonElement>("settingsTabVoice"),
+    settingsTabCamera: requireElement<HTMLButtonElement>("settingsTabCamera"),
+    settingsTabBroadcast: requireElement<HTMLButtonElement>(
+      "settingsTabBroadcast",
+    ),
     settingsTabSession: requireElement<HTMLButtonElement>("settingsTabSession"),
     settingsPanelProfile: requireElement("settingsPanelProfile"),
     settingsPanelSecurity: requireElement("settingsPanelSecurity"),
     settingsPanelVoice: requireElement("settingsPanelVoice"),
+    settingsPanelCamera: requireElement("settingsPanelCamera"),
+    settingsPanelBroadcast: requireElement("settingsPanelBroadcast"),
     settingsPanelSession: requireElement("settingsPanelSession"),
     version: requireElement("version"),
     updateHint: requireElement("updateHint"),

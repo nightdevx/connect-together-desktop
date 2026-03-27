@@ -4,7 +4,8 @@ export type UiSoundEffect =
   | "headphone-on"
   | "headphone-off"
   | "connect"
-  | "disconnect";
+  | "disconnect"
+  | "participant-share-on";
 
 interface UiSoundController {
   setEnabled: (enabled: boolean) => void;
@@ -200,6 +201,24 @@ export const createUiSoundController = (): UiSoundController => {
           peak: 0.036,
           when: now + 0.08,
         });
+        return;
+      }
+      case "participant-share-on": {
+        playTone(ctx, {
+          frequency: 660,
+          type: "sine",
+          duration: 0.07,
+          peak: 0.03,
+          when: now,
+        });
+        playTone(ctx, {
+          frequency: 900,
+          type: "sine",
+          duration: 0.08,
+          peak: 0.028,
+          when: now + 0.055,
+        });
+        return;
       }
     }
   };

@@ -172,11 +172,24 @@ export const buildDesktopLayout = (): string => {
                   <span class="text-text-muted text-[11px] uppercase tracking-wider">Kullanıcı</span>
                   <strong id="currentUser" class="block mt-1 text-text-primary font-semibold">-</strong>
                 </div>
-                <nav class="flex flex-col gap-2" aria-label="Ayar Kategorileri">
-                  <button id="settingsTabProfile" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium active" type="button">Profil</button>
-                  <button id="settingsTabSecurity" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Güvenlik</button>
-                  <button id="settingsTabVoice" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Ses ve Medya</button>
-                  <button id="settingsTabSession" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Oturum</button>
+                <nav class="flex flex-col gap-3" aria-label="Ayar Kategorileri">
+                  <div class="settings-nav-group">
+                    <p class="m-0 mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">Hesap</p>
+                    <div class="flex flex-col gap-2">
+                      <button id="settingsTabProfile" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium active" type="button">Profil</button>
+                      <button id="settingsTabSecurity" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Güvenlik</button>
+                      <button id="settingsTabSession" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Oturum</button>
+                    </div>
+                  </div>
+
+                  <div class="settings-nav-group">
+                    <p class="m-0 mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">Medya</p>
+                    <div class="flex flex-col gap-2">
+                      <button id="settingsTabVoice" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Ses</button>
+                      <button id="settingsTabCamera" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Kamera</button>
+                      <button id="settingsTabBroadcast" class="settings-nav-button h-10 rounded-xl border border-border bg-surface-2/50 text-text-secondary text-left px-3 text-sm font-medium" type="button">Yayın</button>
+                    </div>
+                  </div>
                 </nav>
               </div>
             </section>
@@ -327,8 +340,8 @@ export const buildDesktopLayout = (): string => {
 
                 <!-- Voice -->
                 <section id="settingsPanelVoice" class="rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle hidden">
-                  <h2 class="text-xs font-bold tracking-[0.1em] uppercase text-text-secondary m-0">Ses ve Medya Ayarları</h2>
-                  <p class="mt-1 text-text-muted text-xs mb-4">Mikrofon, kamera ve ekran paylaşımı kalite ayarları ile test araçları.</p>
+                  <h2 class="text-xs font-bold tracking-[0.1em] uppercase text-text-secondary m-0">Ses Ayarları</h2>
+                  <p class="mt-1 text-text-muted text-xs mb-4">Mikrofon, çıkış sesi ve konuşma algılama ayarlarını buradan yönetebilirsin.</p>
                   <p class="status-text m-0 rounded-xl border border-border bg-surface-2/50 px-4 py-2.5 text-text-secondary text-sm" id="voiceState">Ses beklemede</p>
 
                   <div class="flex items-center justify-between gap-3 mt-4">
@@ -351,8 +364,28 @@ export const buildDesktopLayout = (): string => {
                     <button id="micTestToggle" class="btn-secondary text-xs h-10" type="button">Ses Testini Başlat</button>
                   </div>
 
-                  <div class="mt-4 rounded-xl border border-border bg-surface-2/40 p-3 space-y-3">
-                    <h3 class="m-0 text-text-secondary text-[11px] uppercase tracking-wider">Kamera Ayarları</h3>
+                  <label class="mt-4 block text-text-muted text-xs font-medium" for="outputVolume">Ses Seviyesi: <strong id="outputVolumeValue" class="text-text-primary">100%</strong></label>
+                  <input id="outputVolume" class="mt-1 w-full" type="range" min="0" max="100" step="1" value="100" />
+
+                  <label class="text-text-muted text-xs font-medium mt-4 block" for="speakingThresholdMode">Ses Algılama Modu</label>
+                  <select id="speakingThresholdMode" class="mt-1">
+                    <option value="auto">Otomatik</option>
+                    <option value="manual">Manuel</option>
+                  </select>
+
+                  <label class="mt-4 block text-text-muted text-xs font-medium" for="speakingThreshold">Konuşma Eşiği: <strong id="speakingThresholdValue" class="text-text-primary">Otomatik</strong></label>
+                  <input id="speakingThreshold" type="range" min="1" max="100" step="1" value="24" />
+                  <p id="speakingThresholdHint" class="mt-1 text-text-muted text-[11px] leading-snug">Otomatik mod, ortam gürültüsüne göre eşiği canlı ayarlar.</p>
+
+                  <div id="remoteAudioContainer" class="mt-4 flex flex-col gap-2"></div>
+                </section>
+
+                <!-- Camera -->
+                <section id="settingsPanelCamera" class="rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle hidden">
+                  <h2 class="text-xs font-bold tracking-[0.1em] uppercase text-text-secondary m-0">Kamera Ayarları</h2>
+                  <p class="mt-1 text-text-muted text-xs mb-4">Kamera görüntü kalitesini ve test önizlemesini bu bölümden yönet.</p>
+
+                  <div class="rounded-xl border border-border bg-surface-2/40 p-3 space-y-3">
                     <div class="grid grid-cols-2 gap-2">
                       <div>
                         <label class="text-text-muted text-xs font-medium block" for="cameraResolutionSelect">Çözünürlük</label>
@@ -374,9 +407,14 @@ export const buildDesktopLayout = (): string => {
                     <button id="cameraTestToggle" class="btn-secondary text-xs h-10" type="button">Kamera Testini Başlat</button>
                     <video id="cameraTestPreview" class="w-full h-40 rounded-lg bg-surface-0 object-cover" autoplay playsinline muted></video>
                   </div>
+                </section>
 
-                  <div class="mt-4 rounded-xl border border-border bg-surface-2/40 p-3 space-y-3">
-                    <h3 class="m-0 text-text-secondary text-[11px] uppercase tracking-wider">Ekran Paylaşım Ayarları</h3>
+                <!-- Broadcast -->
+                <section id="settingsPanelBroadcast" class="rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle hidden">
+                  <h2 class="text-xs font-bold tracking-[0.1em] uppercase text-text-secondary m-0">Yayın Ayarları</h2>
+                  <p class="mt-1 text-text-muted text-xs mb-4">Ekran paylaşımı ve yayın kalite seçeneklerini bu bölümde ayarlayabilirsin.</p>
+
+                  <div class="rounded-xl border border-border bg-surface-2/40 p-3 space-y-3">
                     <div class="grid grid-cols-3 gap-2">
                       <div>
                         <label class="text-text-muted text-xs font-medium block" for="screenShareModeSelect">Paylaşım Türü</label>
@@ -406,21 +444,6 @@ export const buildDesktopLayout = (): string => {
                     <button id="screenTestToggle" class="btn-secondary text-xs h-10" type="button">Ekran Testini Başlat</button>
                     <video id="screenTestPreview" class="w-full h-40 rounded-lg bg-surface-0 object-contain" autoplay playsinline muted></video>
                   </div>
-
-                  <label class="mt-4 block text-text-muted text-xs font-medium" for="outputVolume">Ses Seviyesi: <strong id="outputVolumeValue" class="text-text-primary">100%</strong></label>
-                  <input id="outputVolume" class="mt-1 w-full" type="range" min="0" max="100" step="1" value="100" />
-
-                  <label class="text-text-muted text-xs font-medium mt-4 block" for="speakingThresholdMode">Ses Algılama Modu</label>
-                  <select id="speakingThresholdMode" class="mt-1">
-                    <option value="auto">Otomatik</option>
-                    <option value="manual">Manuel</option>
-                  </select>
-
-                  <label class="mt-4 block text-text-muted text-xs font-medium" for="speakingThreshold">Konuşma Eşiği: <strong id="speakingThresholdValue" class="text-text-primary">Otomatik</strong></label>
-                  <input id="speakingThreshold" type="range" min="1" max="100" step="1" value="24" />
-                  <p id="speakingThresholdHint" class="mt-1 text-text-muted text-[11px] leading-snug">Otomatik mod, ortam gürültüsüne göre eşiği canlı ayarlar.</p>
-
-                  <div id="remoteAudioContainer" class="mt-4 flex flex-col gap-2"></div>
                 </section>
 
                 <!-- Session -->

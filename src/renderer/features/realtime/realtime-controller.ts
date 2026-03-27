@@ -15,9 +15,10 @@ interface RealtimeControllerDeps {
     reconnectAttempts: number;
     connected: boolean;
   }) => void;
-  onLobbyState: (members: LobbyMemberSnapshot[]) => void;
-  onMemberJoined: (member: LobbyMemberSnapshot) => void;
-  onMemberLeft: (userId: string) => void;
+  onLobbyState: (members: LobbyMemberSnapshot[], revision?: number) => void;
+  onMemberJoined: (member: LobbyMemberSnapshot, revision?: number) => void;
+  onMemberUpdated: (member: LobbyMemberSnapshot, revision?: number) => void;
+  onMemberLeft: (userId: string, revision?: number) => void;
   onAutoRejoin: () => void;
   onRtcSignal: (payload: unknown) => void;
   onProducerAvailable: (payload: {
@@ -70,17 +71,22 @@ export const subscribeRealtimeEvents = (
     }
 
     if (event.type === "lobby-state" && Array.isArray(event.members)) {
-      deps.onLobbyState(event.members);
+      deps.onLobbyState(event.members, event.revision);
       return;
     }
 
     if (event.type === "lobby-member-joined" && event.member) {
-      deps.onMemberJoined(event.member);
+      deps.onMemberJoined(event.member, event.revision);
+      return;
+    }
+
+    if (event.type === "lobby-member-updated" && event.member) {
+      deps.onMemberUpdated(event.member, event.revision);
       return;
     }
 
     if (event.type === "lobby-member-left" && event.userId) {
-      deps.onMemberLeft(event.userId);
+      deps.onMemberLeft(event.userId, event.revision);
       return;
     }
 

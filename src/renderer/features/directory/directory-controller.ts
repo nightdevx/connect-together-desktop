@@ -1,8 +1,10 @@
-import type { DesktopApi, RegisteredUserSnapshot } from "../../types/desktop-api";
+import type {
+  DesktopApi,
+  RegisteredUserSnapshot,
+} from "../../types/desktop-api";
 import type { DomRefs } from "../../ui/dom";
 import type { LobbyController } from "../lobby/lobby-controller";
 
-const FRIENDS_PRESENCE_REFRESH_MS = 2000;
 const USER_DIRECTORY_REFRESH_MS = 5000;
 
 interface DirectoryControllerDeps {
@@ -12,7 +14,7 @@ interface DirectoryControllerDeps {
   getSelfUserId: () => string | null;
   setStatus: (message: string, isError: boolean) => void;
   getErrorMessage: (error?: { message?: string }) => string;
-  refreshLobby: (silent?: boolean) => Promise<void>;
+  onUsersRefreshed?: (users: RegisteredUserSnapshot[]) => void;
 }
 
 export interface DirectoryController {
@@ -26,9 +28,16 @@ export interface DirectoryController {
 export const createDirectoryController = (
   deps: DirectoryControllerDeps,
 ): DirectoryController => {
-  const { dom, desktopApi, lobbyController, getSelfUserId, setStatus, getErrorMessage, refreshLobby } = deps;
+  const {
+    dom,
+    desktopApi,
+    lobbyController,
+    getSelfUserId,
+    setStatus,
+    getErrorMessage,
+    onUsersRefreshed,
+  } = deps;
   let registeredUsers: RegisteredUserSnapshot[] = [];
-  let friendsPresenceRefreshTimer: number | null = null;
   let usersDirectoryRefreshTimer: number | null = null;
 
   const renderUserDirectory = (): void => {
@@ -94,21 +103,65 @@ export const createDirectoryController = (
 
       const presence = document.createElement("div");
       presence.className =
-        "directory-presence flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted flex-shrink-0";
+        "directory-presence flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted flex-shrink-0 flex-wrap justify-end";
 
-      const dot = document.createElement("span");
-      dot.className =
-        "directory-presence-dot w-2 h-2 rounded-full bg-text-muted";
+      const createPresenceBadge = (
+        label: string,
+        tone: "online" | "lobby" | "offline",
+      ): HTMLElement => {
+        const badge = document.createElement("span");
+        badge.className =
+          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5";
 
-      const label = document.createElement("span");
-      label.textContent = inLobby
-        ? "sohbette"
-        : appOnline
-          ? "uygulamada"
-          : "çevrimdışı";
+        if (tone === "lobby") {
+          badge.classList.add(
+            "border-emerald-400/55",
+            "text-emerald-200",
+            "bg-emerald-400/15",
+          );
+        } else if (tone === "online") {
+          badge.classList.add(
+            "border-sky-400/55",
+            "text-sky-200",
+            "bg-sky-400/15",
+          );
+        } else {
+          badge.classList.add(
+            "border-border",
+            "text-text-muted",
+            "bg-surface-2/50",
+          );
+        }
 
-      presence.appendChild(dot);
-      presence.appendChild(label);
+        const dot = document.createElement("span");
+        dot.className = "w-1.5 h-1.5 rounded-full";
+        if (tone === "lobby") {
+          dot.classList.add("bg-emerald-300");
+        } else if (tone === "online") {
+          dot.classList.add("bg-sky-300");
+        } else {
+          dot.classList.add("bg-text-muted");
+        }
+
+        const text = document.createElement("span");
+        text.textContent = label;
+
+        badge.appendChild(dot);
+        badge.appendChild(text);
+        return badge;
+      };
+
+      if (inLobby) {
+        presence.appendChild(createPresenceBadge("lobide", "lobby"));
+      }
+
+      if (appOnline) {
+        presence.appendChild(createPresenceBadge("uygulamada", "online"));
+      }
+
+      if (!inLobby && !appOnline) {
+        presence.appendChild(createPresenceBadge("cevrimdisi", "offline"));
+      }
 
       item.appendChild(identity);
       item.appendChild(presence);
@@ -133,6 +186,7 @@ export const createDirectoryController = (
     }
 
     registeredUsers = result.data.users;
+    onUsersRefreshed?.(registeredUsers);
     renderUserDirectory();
     if (!silent) {
       setStatus("Arkadaş listesi güncellendi", false);
@@ -140,11 +194,6 @@ export const createDirectoryController = (
   };
 
   const stopFriendsPresenceAutoRefresh = (): void => {
-    if (friendsPresenceRefreshTimer !== null) {
-      window.clearInterval(friendsPresenceRefreshTimer);
-      friendsPresenceRefreshTimer = null;
-    }
-
     if (usersDirectoryRefreshTimer !== null) {
       window.clearInterval(usersDirectoryRefreshTimer);
       usersDirectoryRefreshTimer = null;
@@ -156,10 +205,6 @@ export const createDirectoryController = (
     if (!getSelfUserId()) {
       return;
     }
-
-    friendsPresenceRefreshTimer = window.setInterval(() => {
-      void refreshLobby(true);
-    }, FRIENDS_PRESENCE_REFRESH_MS);
 
     usersDirectoryRefreshTimer = window.setInterval(() => {
       void refreshRegisteredUsers(true);
