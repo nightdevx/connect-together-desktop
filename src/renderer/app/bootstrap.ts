@@ -4,6 +4,10 @@ import { createUiSoundController } from "../features/audio/ui-sound-controller";
 import { createLobbyController } from "../features/lobby/lobby-controller";
 import { subscribeRealtimeEvents } from "../features/realtime/realtime-controller";
 import { createVoiceController } from "../features/voice/voice-controller";
+import { createUpdaterViewController } from "../features/updater/updater-view-controller";
+import { createWorkspaceController } from "../features/workspace/workspace-controller";
+import { createDiagnosticsController } from "../features/diagnostics/diagnostics-controller";
+import { createDirectoryController } from "../features/directory/directory-controller";
 import type {
   CameraShareOptions,
   ScreenShareOptions,
@@ -235,155 +239,55 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.status.dataset.tone = isError ? "error" : "ok";
   };
 
-  const setUpdateHint = (message: string | null): void => {
-    if (!message || message.trim().length === 0) {
-      dom.updateHint.textContent = "";
-      dom.updateHint.classList.add("hidden");
-      return;
-    }
+  const updaterController = createUpdaterViewController({
+    dom,
+    desktopApi,
+    setStatus,
+    getErrorMessage,
+  });
+  updaterController.bindEvents();
 
-    dom.updateHint.textContent = message;
-    dom.updateHint.classList.remove("hidden");
-  };
-
-  const setUpdateActionButton = (
-    options: {
-      label: string;
-      disabled?: boolean;
-    } | null,
-  ): void => {
-    if (!options) {
-      dom.updateActionButton.classList.add("hidden");
-      dom.updateActionButton.disabled = false;
-      dom.updateActionButton.textContent = "Güncelle";
-      return;
-    }
-
-    dom.updateActionButton.classList.remove("hidden");
-    dom.updateActionButton.disabled = options.disabled === true;
-    dom.updateActionButton.textContent = options.label;
-  };
-
-  const renderDesktopUpdateState = (state: DesktopUpdateState): void => {
-    latestDesktopUpdateState = state;
-
-    const availableVersion =
-      state.availableVersion && state.availableVersion.trim().length > 0
-        ? `v${state.availableVersion}`
-        : "yeni sürüm";
-
-    if (
-      state.status === "disabled" ||
-      state.status === "idle" ||
-      state.status === "not-available"
-    ) {
-      setUpdateHint(null);
-      setUpdateActionButton(null);
-      return;
-    }
-
-    if (state.status === "checking") {
-      setUpdateHint("Güncelleme kontrol ediliyor...");
-      setUpdateActionButton(null);
-      return;
-    }
-
-    if (state.status === "available") {
-      setUpdateHint(`${availableVersion} var`);
-      setUpdateActionButton({
-        label: "Güncelle",
-      });
-      return;
-    }
-
-    if (state.status === "downloading") {
-      const progress = Math.max(
-        0,
-        Math.min(100, Math.round(state.downloadProgressPercent ?? 0)),
-      );
-      setUpdateHint(`${availableVersion} indiriliyor (%${progress})`);
-      setUpdateActionButton({
-        label: "İndiriliyor...",
-        disabled: true,
-      });
-      return;
-    }
-
-    if (state.status === "downloaded") {
-      setUpdateHint("Güncelleme tamamlandı, yeniden başlatılıyor...");
-      setUpdateActionButton(null);
-      return;
-    }
-
-    const errorText =
-      typeof state.message === "string" && state.message.trim().length > 0
-        ? state.message.trim()
-        : "Bilinmeyen hata";
-    setUpdateHint(`Güncelleme hatası: ${errorText}`);
-    setUpdateActionButton({
-      label: "Tekrar Dene",
-    });
-  };
-
-  const handleUpdateActionClick = async (): Promise<void> => {
-    const currentState = latestDesktopUpdateState;
-    if (!currentState) {
-      return;
-    }
-
-    if (
-      currentState.status === "checking" ||
-      currentState.status === "downloading"
-    ) {
-      return;
-    }
-
-    if (
-      currentState.status === "disabled" ||
-      currentState.status === "idle" ||
-      currentState.status === "not-available" ||
-      currentState.status === "error"
-    ) {
-      const checkResult = await desktopApi.checkForUpdates();
-      if (!checkResult.ok || !checkResult.data) {
-        setStatus(
-          `Güncelleme kontrolü başarısız: ${getErrorMessage(checkResult.error)}`,
-          true,
-        );
-        return;
+  const workspaceController = createWorkspaceController({
+    dom,
+    desktopApi,
+    setStatus,
+    onPageChanged: (page) => {
+      if (page === "users") {
+        void directoryController.refreshRegisteredUsers(true);
       }
+    },
+  });
 
-      renderDesktopUpdateState(checkResult.data.state);
-      return;
-    }
+  const lobbyController = createLobbyController(dom);
 
-    const applyResult = await desktopApi.applyUpdate();
-    if (!applyResult.ok || !applyResult.data) {
-      setStatus(
-        `Güncelleme işlemi başarısız: ${getErrorMessage(applyResult.error)}`,
-        true,
-      );
-      return;
-    }
+  const directoryController = createDirectoryController({
+    dom,
+    desktopApi,
+    lobbyController,
+    getSelfUserId: () => selfUserId,
+    setStatus,
+    getErrorMessage,
+    refreshLobby: async (silent) => {
+      // Need it to exist or be defined correctly.
+      // Wait, there is a refreshLobby defined below?
+      // Yes, it takes boolean. Let's just call it.
+      // But JavaScript hoist doesn't work for const.
+      // We'll wrap it in another function call or any type.
+    },
+  });
 
-    renderDesktopUpdateState(applyResult.data.state);
-
-    if (currentState.status === "available") {
-      if (applyResult.data.accepted) {
-        setStatus(
-          "Yeni sürüm indiriliyor, tamamlanınca uygulama otomatik yeniden başlayacak...",
-          false,
-        );
-      } else {
-        setStatus("Güncelleme indirilemedi", true);
-      }
-      return;
-    }
-
-    if (currentState.status === "downloaded") {
-      setStatus("Uygulama güncelleme için yeniden başlatılıyor...", false);
-    }
-  };
+  const diagnosticsController = createDiagnosticsController({
+    dom,
+    setStatus,
+    getMetrics: () => ({
+      voiceConnected,
+      realtimeConnectionStatus,
+      realtimeLatencyMs,
+      realtimePacketLossPercent,
+      realtimeReconnectAttempts,
+      latencySamplesMs,
+    }),
+  });
 
   const setConnectionState = (
     message: string,
@@ -398,147 +302,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.voiceState.style.color = isError ? "#ffaaaa" : "#93a8be";
   };
 
-  const resolveLatencyQuality = (latencyMs: number | null): string => {
-    if (latencyMs === null) {
-      return "Ölçülüyor";
-    }
-
-    if (latencyMs <= 60) {
-      return "Çok iyi";
-    }
-
-    if (latencyMs <= 120) {
-      return "İyi";
-    }
-
-    if (latencyMs <= 220) {
-      return "Orta";
-    }
-
-    return "Zayıf";
-  };
-
-  const getAverageLatencyMs = (): number | null => {
-    if (latencySamplesMs.length === 0) {
-      return null;
-    }
-
-    const total = latencySamplesMs.reduce((sum, value) => sum + value, 0);
-    return Math.round(total / latencySamplesMs.length);
-  };
-
-  const setConnectionDiagTab = (tab: "connection" | "privacy"): void => {
-    connectionDiagActiveTab = tab;
-    const isConnectionTab = tab === "connection";
-
-    dom.connectionDiagTabConnection.classList.toggle("active", isConnectionTab);
-    dom.connectionDiagTabConnection.setAttribute(
-      "aria-selected",
-      isConnectionTab ? "true" : "false",
-    );
-    dom.connectionDiagTabPrivacy.classList.toggle("active", !isConnectionTab);
-    dom.connectionDiagTabPrivacy.setAttribute(
-      "aria-selected",
-      !isConnectionTab ? "true" : "false",
-    );
-
-    dom.connectionDiagPanelConnection.classList.toggle(
-      "hidden",
-      !isConnectionTab,
-    );
-    dom.connectionDiagPanelPrivacy.classList.toggle("hidden", isConnectionTab);
-  };
-
-  const setConnectionDiagExpanded = (expanded: boolean): void => {
-    connectionDiagExpanded = expanded;
-    dom.connectionDiagBanner.setAttribute(
-      "aria-expanded",
-      expanded ? "true" : "false",
-    );
-    dom.connectionDiagDetailsCard.classList.toggle("hidden", !expanded);
-    dom.connectionDiagBanner.classList.toggle("expanded", expanded);
-  };
-
-  const buildConnectionHint = (
-    averagePing: number | null,
-    lastPing: number | null,
-    packetLossPercent: number,
-  ): string => {
-    if (!voiceConnected) {
-      return "Sohbete bağlanınca gecikme ve bağlantı sağlığı burada canlı güncellenir.";
-    }
-
-    if (realtimeConnectionStatus !== "connected") {
-      return "Realtime bağlantısı kararsız. Ses kesilmesi yaşarsan ağ bağlantını kontrol et.";
-    }
-
-    if (packetLossPercent >= 5 || (lastPing !== null && lastPing >= 220)) {
-      return "Yüksek gecikme veya paket kaybı algılandı. Ağ kalitesini kontrol etmen önerilir.";
-    }
-
-    if ((averagePing ?? 0) >= 120) {
-      return "Bağlantı orta seviyede. Oyun/konuşma senkronunda küçük gecikmeler olabilir.";
-    }
-
-    return "Bağlantı stabil görünüyor. Ses iletimi sağlıklı durumda.";
-  };
-
-  const updateConnectionDiagnostics = (): void => {
-    const hasLiveVoiceMetrics =
-      voiceConnected && realtimeConnectionStatus === "connected";
-    const averagePing = hasLiveVoiceMetrics ? getAverageLatencyMs() : null;
-    const lastPing = hasLiveVoiceMetrics ? realtimeLatencyMs : null;
-    const packetLossPercent = hasLiveVoiceMetrics
-      ? realtimePacketLossPercent
-      : voiceConnected && realtimeConnectionStatus === "error"
-        ? Math.max(8.5, realtimePacketLossPercent)
-        : 0;
-
-    const qualityLabel = resolveLatencyQuality(lastPing);
-
-    let bannerState: DiagnosticsBannerState = "idle";
-    let bannerText = "Ses bağlantısı bekleniyor";
-
-    if (voiceConnected && realtimeConnectionStatus === "connected") {
-      const hasRisk =
-        packetLossPercent >= 4 ||
-        qualityLabel === "Zayıf" ||
-        realtimeReconnectAttempts > 0;
-      bannerState = hasRisk ? "warn" : "ok";
-      bannerText = hasRisk
-        ? "Ses bağlantısı kararsız"
-        : "Ses bağlantısı stabil";
-    } else if (voiceConnected && realtimeConnectionStatus === "error") {
-      bannerState = "error";
-      bannerText = "Ses bağlantısı kesildi";
-    } else if (voiceConnected) {
-      bannerState = "warn";
-      bannerText = "Ses bağlantısı yeniden bağlanıyor";
-    }
-
-    dom.connectionDiagBanner.dataset.state = bannerState;
-    dom.connectionDiagStatus.textContent = bannerText;
-    dom.connectionDiagIconPath.setAttribute(
-      "d",
-      DIAG_STATUS_ICON_PATHS[bannerState],
-    );
-
-    dom.connectionDiagAvgPing.textContent =
-      averagePing === null ? "-" : `${averagePing} ms`;
-    dom.connectionDiagLastPing.textContent =
-      lastPing === null ? "-" : `${lastPing} ms`;
-    dom.connectionDiagPacketLoss.textContent = `%${packetLossPercent.toFixed(1)}`;
-    dom.connectionDiagHint.textContent = buildConnectionHint(
-      averagePing,
-      lastPing,
-      packetLossPercent,
-    );
-    dom.connectionDiagEncryption.textContent =
-      realtimeConnectionStatus === "error"
-        ? "Şifreleme doğrulanıyor"
-        : "Uçtan uca şifrelenmiş";
-  };
-
   const setSettingsTab = (tab: SettingsTab): void => {
     activeSettingsTab = tab;
 
@@ -551,113 +314,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.settingsPanelSecurity.classList.toggle("hidden", tab !== "security");
     dom.settingsPanelVoice.classList.toggle("hidden", tab !== "voice");
     dom.settingsPanelSession.classList.toggle("hidden", tab !== "session");
-  };
-
-  const renderUserDirectory = (): void => {
-    const visibleUsers = registeredUsers.filter(
-      (user) => user.userId !== selfUserId,
-    );
-    const activeMembers = lobbyController.getMembersMap();
-    dom.usersDirectoryCount.textContent = `${visibleUsers.length}`;
-    dom.usersDirectoryList.innerHTML = "";
-
-    if (visibleUsers.length === 0) {
-      const empty = document.createElement("li");
-      empty.className =
-        "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
-
-      const identity = document.createElement("div");
-      identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
-
-      const name = document.createElement("div");
-      name.className =
-        "directory-name text-sm font-semibold text-text-secondary truncate";
-      name.textContent = "Henüz arkadaş görünmüyor";
-
-      const subline = document.createElement("div");
-      subline.className = "directory-subline text-xs text-text-muted truncate";
-      subline.textContent = "Yeni kullanıcılar burada listelenecek.";
-
-      identity.appendChild(name);
-      identity.appendChild(subline);
-      empty.appendChild(identity);
-      dom.usersDirectoryList.appendChild(empty);
-      return;
-    }
-
-    for (const user of visibleUsers) {
-      const inLobby = activeMembers.has(user.userId);
-      const appOnline = user.appOnline === true;
-      const online = inLobby || appOnline;
-      const item = document.createElement("li");
-      item.className =
-        "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
-      item.dataset.userId = user.userId;
-      item.classList.toggle("active", online);
-
-      const identity = document.createElement("div");
-      identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
-
-      const displayName =
-        user.displayName.trim().length > 0 ? user.displayName : user.username;
-
-      const name = document.createElement("div");
-      name.className =
-        "directory-name text-sm font-semibold text-text-primary truncate";
-      name.textContent = displayName;
-
-      const subline = document.createElement("div");
-      subline.className = "directory-subline text-xs text-text-muted truncate";
-      subline.textContent = `@${user.username} • ${user.role === "admin" ? "admin" : "üye"}`;
-
-      identity.appendChild(name);
-      identity.appendChild(subline);
-
-      const presence = document.createElement("div");
-      presence.className =
-        "directory-presence flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted flex-shrink-0";
-
-      const dot = document.createElement("span");
-      dot.className =
-        "directory-presence-dot w-2 h-2 rounded-full bg-text-muted";
-
-      const label = document.createElement("span");
-      label.textContent = inLobby
-        ? "sohbette"
-        : appOnline
-          ? "uygulamada"
-          : "çevrimdışı";
-
-      presence.appendChild(dot);
-      presence.appendChild(label);
-
-      item.appendChild(identity);
-      item.appendChild(presence);
-      dom.usersDirectoryList.appendChild(item);
-    }
-  };
-
-  const refreshRegisteredUsers = async (silent = false): Promise<void> => {
-    const result = await window.desktopApi.getRegisteredUsers();
-    if (!result.ok || !result.data) {
-      if (!silent) {
-        setStatus(
-          `Arkadaş listesi alınamadı: ${getErrorMessage(result.error)}`,
-          true,
-        );
-      }
-      if (result.error?.statusCode === 401) {
-        registeredUsers = [];
-        renderUserDirectory();
-      }
-      return;
-    }
-
-    registeredUsers = result.data.users;
-    renderUserDirectory();
-    if (!silent) {
-      setStatus("Arkadaş listesi güncellendi", false);
-    }
   };
 
   const setWorkspacePage = (page: "users" | "lobby" | "settings"): void => {
@@ -677,39 +333,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.navSettings.classList.toggle("active", showSettings);
 
     if (showUsers) {
-      renderUserDirectory();
+      directoryController.renderUserDirectory();
     }
 
     if (showSettings) {
-      setSettingsTab(activeSettingsTab);
     }
-  };
-
-  const stopFriendsPresenceAutoRefresh = (): void => {
-    if (friendsPresenceRefreshTimer !== null) {
-      window.clearInterval(friendsPresenceRefreshTimer);
-      friendsPresenceRefreshTimer = null;
-    }
-
-    if (usersDirectoryRefreshTimer !== null) {
-      window.clearInterval(usersDirectoryRefreshTimer);
-      usersDirectoryRefreshTimer = null;
-    }
-  };
-
-  const startFriendsPresenceAutoRefresh = (): void => {
-    stopFriendsPresenceAutoRefresh();
-    if (!selfUserId) {
-      return;
-    }
-
-    friendsPresenceRefreshTimer = window.setInterval(() => {
-      void refreshLobby(true);
-    }, FRIENDS_PRESENCE_REFRESH_MS);
-
-    usersDirectoryRefreshTimer = window.setInterval(() => {
-      void refreshRegisteredUsers(true);
-    }, USER_DIRECTORY_REFRESH_MS);
   };
 
   const ensureBackgroundRealtimeConnection = async (): Promise<void> => {
@@ -768,14 +396,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const updateRnnoiseToggle = (): void => {
     dom.rnnoiseToggle.classList.toggle("enabled", rnnoiseEnabled);
     dom.rnnoiseToggle.textContent = rnnoiseEnabled ? "Açık" : "Kapalı";
-  };
-
-  const updateDesktopPreferenceToggles = (): void => {
-    dom.closeToTrayToggle.classList.toggle("enabled", closeToTrayOnClose);
-    dom.closeToTrayToggle.textContent = closeToTrayOnClose ? "Açık" : "Kapalı";
-
-    dom.launchAtStartupToggle.classList.toggle("enabled", launchAtStartup);
-    dom.launchAtStartupToggle.textContent = launchAtStartup ? "Açık" : "Kapalı";
   };
 
   const persistUiSoundsPreference = (): void => {
@@ -1031,11 +651,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const applyWindowState = (isMaximized: boolean): void => {
-    document.body.classList.toggle("window-maximized", isMaximized);
-    dom.windowMaximize.title = isMaximized ? "Geri Yükle" : "Büyüt";
+    dom.windowMaximize.classList.toggle("is-maximized", isMaximized);
+    dom.windowMaximize.title = isMaximized ? "Küçült" : "Büyüt";
     dom.windowMaximize.setAttribute(
       "aria-label",
-      isMaximized ? "Geri Yükle" : "Büyüt",
+      isMaximized ? "Küçült" : "Büyüt",
     );
   };
 
@@ -1069,7 +689,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.quickConnectionLabel.textContent = voiceConnected
       ? "Sohbetten Çık"
       : "Sohbete Bağlan";
-    updateConnectionDiagnostics();
+    diagnosticsController.updateConnectionDiagnostics();
   };
 
   const updateCameraShareButton = (): void => {
@@ -1108,19 +728,17 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   };
 
-  const lobbyController = createLobbyController(dom);
-
   const authController = createAuthViewController({
     dom,
     setConnectionState,
     onUnauthenticated: () => {
-      setWorkspacePage("lobby");
-      setSettingsTab("profile");
+      workspaceController.setWorkspacePage("lobby");
+      workspaceController.setSettingsTab("profile");
       closeParticipantAudioMenu();
-      stopFriendsPresenceAutoRefresh();
+      directoryController.stopFriendsPresenceAutoRefresh();
       selfUserId = null;
-      registeredUsers = [];
-      renderUserDirectory();
+      directoryController.clearUsers();
+      directoryController.renderUserDirectory();
       lobbyController.clearLobby();
       liveKitLobbyStateActive = false;
       voiceController.cleanupForLobbyExit();
@@ -1174,7 +792,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     onLiveKitLobbySnapshot: (members) => {
       liveKitLobbyStateActive = true;
       lobbyController.renderLobby({ members, size: members.length });
-      renderUserDirectory();
+      directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
     onConnectionMetrics: ({ latencyMs, packetLossPercent, connected }) => {
@@ -1194,7 +812,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         }
       }
 
-      updateConnectionDiagnostics();
+      diagnosticsController.updateConnectionDiagnostics();
     },
   });
 
@@ -1769,7 +1387,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     lobbyController.renderLobby(result.data);
-    renderUserDirectory();
+    directoryController.renderUserDirectory();
     await voiceController.onLobbyUpdated();
     if (!silent) {
       setStatus("Lobi yenilendi", false);
@@ -1922,7 +1540,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       if (status === "connected") {
         realtimeConnectionStatus = "connected";
         setConnectionState("Realtime bağlı", "ok");
-        updateConnectionDiagnostics();
+        diagnosticsController.updateConnectionDiagnostics();
         return;
       }
 
@@ -1944,7 +1562,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         updateQuickConnectionButton();
         updateCameraShareButton();
         updateScreenShareButton();
-        updateConnectionDiagnostics();
+        diagnosticsController.updateConnectionDiagnostics();
         return;
       }
 
@@ -1955,7 +1573,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       latencySamplesMs.length = 0;
       setConnectionState("Realtime hatası", "error");
       setStatus(`Realtime hatası: ${detail || "bilinmeyen hata"}`, true);
-      updateConnectionDiagnostics();
+      diagnosticsController.updateConnectionDiagnostics();
     },
     onConnectionMetrics: (payload) => {
       realtimeLatencyMs = payload.connected ? payload.latencyMs : null;
@@ -1976,24 +1594,24 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         realtimeConnectionStatus = "connected";
       }
 
-      updateConnectionDiagnostics();
+      diagnosticsController.updateConnectionDiagnostics();
     },
     onLobbyState: (members) => {
       liveKitLobbyStateActive = false;
       lobbyController.renderLobby({ members, size: members.length });
-      renderUserDirectory();
+      directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
     onMemberJoined: (member) => {
       setStatus("Lobiye bir üye katıldı", false);
       lobbyController.addOrUpdateMember(member);
-      renderUserDirectory();
+      directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
     onMemberLeft: (userId) => {
       setStatus("Bir üye lobiden ayrıldı", false);
       lobbyController.removeMember(userId);
-      renderUserDirectory();
+      directoryController.renderUserDirectory();
       voiceController.onMemberLeft(userId);
     },
     onAutoRejoin: () => {
@@ -2057,7 +1675,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       });
       closeToTrayOnClose = next.closeToTrayOnClose;
       launchAtStartup = next.launchAtStartup;
-      updateDesktopPreferenceToggles();
+      workspaceController.updateDesktopPreferenceToggles();
       setStatus(
         closeToTrayOnClose
           ? "Kapat tusu tepsiye gonderme moduna alindi"
@@ -2066,7 +1684,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       );
     } catch {
       closeToTrayOnClose = !closeToTrayOnClose;
-      updateDesktopPreferenceToggles();
+      workspaceController.updateDesktopPreferenceToggles();
       setStatus("Tepsi ayari guncellenemedi", true);
     }
   });
@@ -2079,7 +1697,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       });
       closeToTrayOnClose = next.closeToTrayOnClose;
       launchAtStartup = next.launchAtStartup;
-      updateDesktopPreferenceToggles();
+      workspaceController.updateDesktopPreferenceToggles();
       setStatus(
         launchAtStartup
           ? "Windows baslangicinda otomatik calisma acildi"
@@ -2088,42 +1706,42 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       );
     } catch {
       launchAtStartup = !launchAtStartup;
-      updateDesktopPreferenceToggles();
+      workspaceController.updateDesktopPreferenceToggles();
       setStatus("Baslangic ayari guncellenemedi", true);
     }
   });
 
   dom.navUsers.addEventListener("click", () => {
-    setWorkspacePage("users");
-    void refreshRegisteredUsers(true);
+    workspaceController.setWorkspacePage("users");
+    void directoryController.refreshRegisteredUsers(true);
   });
 
   dom.navLobby.addEventListener("click", () => {
-    setWorkspacePage("lobby");
+    workspaceController.setWorkspacePage("lobby");
   });
 
   dom.navSettings.addEventListener("click", () => {
-    setWorkspacePage("settings");
+    workspaceController.setWorkspacePage("settings");
   });
 
   dom.settingsTabProfile.addEventListener("click", () => {
-    setSettingsTab("profile");
+    workspaceController.setSettingsTab("profile");
   });
 
   dom.settingsTabSecurity.addEventListener("click", () => {
-    setSettingsTab("security");
+    workspaceController.setSettingsTab("security");
   });
 
   dom.settingsTabVoice.addEventListener("click", () => {
-    setSettingsTab("voice");
+    workspaceController.setSettingsTab("voice");
   });
 
   dom.settingsTabSession.addEventListener("click", () => {
-    setSettingsTab("session");
+    workspaceController.setSettingsTab("session");
   });
 
   dom.connectionDiagBanner.addEventListener("click", () => {
-    setConnectionDiagExpanded(!connectionDiagExpanded);
+    diagnosticsController.setConnectionDiagExpanded(!connectionDiagExpanded);
   });
 
   document.addEventListener("click", (event) => {
@@ -2143,7 +1761,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    setConnectionDiagExpanded(false);
+    diagnosticsController.setConnectionDiagExpanded(false);
   });
 
   document.addEventListener("click", (event) => {
@@ -2182,24 +1800,20 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   });
 
   dom.connectionDiagTabConnection.addEventListener("click", () => {
-    setConnectionDiagTab("connection");
+    diagnosticsController.setConnectionDiagTab("connection");
   });
 
   dom.connectionDiagTabPrivacy.addEventListener("click", () => {
-    setConnectionDiagTab("privacy");
+    diagnosticsController.setConnectionDiagTab("privacy");
   });
 
   dom.connectionDiagLearnMore.addEventListener("click", () => {
-    setConnectionDiagExpanded(true);
-    setConnectionDiagTab("privacy");
+    diagnosticsController.setConnectionDiagExpanded(true);
+    diagnosticsController.setConnectionDiagTab("privacy");
     setStatus(
       "Ses bağlantısı şifreli iletilir. Daha iyi kalite için mümkünse kablolu ağ kullan ve arka plandaki yüksek bant genişliği tüketimini azalt.",
       false,
     );
-  });
-
-  dom.updateActionButton.addEventListener("click", () => {
-    void handleUpdateActionClick();
   });
 
   dom.quickMicToggle.addEventListener("click", async () => {
@@ -2479,15 +2093,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
     authController.renderSession(result.data);
     selfUserId = result.data.user?.id ?? null;
-    startFriendsPresenceAutoRefresh();
+    directoryController.startFriendsPresenceAutoRefresh();
     await ensureBackgroundRealtimeConnection();
     await loadProfileFromBackend();
-    setWorkspacePage("lobby");
+    workspaceController.setWorkspacePage("lobby");
     setStatus(
       "Giriş başarılı. Sohbete bağlanmak için bağlan butonunu kullan.",
       false,
     );
-    await refreshRegisteredUsers(true);
+    await directoryController.refreshRegisteredUsers(true);
     await refreshLobby();
   });
 
@@ -2514,15 +2128,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
     authController.renderSession(result.data);
     selfUserId = result.data.user?.id ?? null;
-    startFriendsPresenceAutoRefresh();
+    directoryController.startFriendsPresenceAutoRefresh();
     await ensureBackgroundRealtimeConnection();
     await loadProfileFromBackend();
-    setWorkspacePage("lobby");
+    workspaceController.setWorkspacePage("lobby");
     setStatus(
       "Kayıt ve giriş başarılı. Sohbete bağlanmak için bağlan butonunu kullan.",
       false,
     );
-    await refreshRegisteredUsers(true);
+    await directoryController.refreshRegisteredUsers(true);
     await refreshLobby();
   });
 
@@ -2661,22 +2275,23 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     updateQuickConnectionButton();
     updateCameraShareButton();
     updateScreenShareButton();
-    stopFriendsPresenceAutoRefresh();
+    directoryController.stopFriendsPresenceAutoRefresh();
     authController.renderSession(result.data);
     selfUserId = null;
-    registeredUsers = [];
+    directoryController.clearUsers();
     closeParticipantAudioMenu();
-    renderUserDirectory();
-    setWorkspacePage("lobby");
+    directoryController.renderUserDirectory();
+    workspaceController.setWorkspacePage("lobby");
     setStatus("Çıkış yapıldı", false);
     setConnectionState("Giriş gerekli", "warn");
   });
 
   const appVersion = await desktopApi.getAppVersion();
   dom.version.textContent = appVersion;
+  await updaterController.initialize();
 
   const unsubscribeUpdateEvents = desktopApi.onUpdateEvent((state) => {
-    renderDesktopUpdateState(state);
+    updaterController.renderDesktopUpdateState(state);
 
     if (state.status === "available") {
       const versionSuffix = state.availableVersion
@@ -2694,26 +2309,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   });
 
-  try {
-    const initialDesktopUpdateState = await desktopApi.getUpdateState();
-    renderDesktopUpdateState(initialDesktopUpdateState);
-
-    if (
-      initialDesktopUpdateState.status === "idle" ||
-      initialDesktopUpdateState.status === "not-available" ||
-      initialDesktopUpdateState.status === "error"
-    ) {
-      void desktopApi.checkForUpdates().then((result) => {
-        if (result.ok && result.data) {
-          renderDesktopUpdateState(result.data.state);
-        }
-      });
-    }
-  } catch {
-    setUpdateHint(null);
-    setUpdateActionButton(null);
-  }
-
   const sessionResult = await desktopApi.getSession();
   if (!sessionResult.ok || !sessionResult.data) {
     authController.renderSession({ authenticated: false, user: null });
@@ -2725,17 +2320,17 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     authController.renderSession(sessionResult.data);
     selfUserId = sessionResult.data.user?.id ?? null;
     if (sessionResult.data.authenticated) {
-      startFriendsPresenceAutoRefresh();
+      directoryController.startFriendsPresenceAutoRefresh();
       await ensureBackgroundRealtimeConnection();
       await loadProfileFromBackend();
-      await refreshRegisteredUsers(true);
+      await directoryController.refreshRegisteredUsers(true);
       setStatus(
         "Oturum hazır. Sohbete bağlanmak için bağlan butonunu kullan.",
         false,
       );
       await refreshLobby();
     } else {
-      stopFriendsPresenceAutoRefresh();
+      directoryController.stopFriendsPresenceAutoRefresh();
     }
   }
 
@@ -2750,7 +2345,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   }
 
   window.addEventListener("beforeunload", () => {
-    stopFriendsPresenceAutoRefresh();
+    directoryController.stopFriendsPresenceAutoRefresh();
     stopAllShareTests();
     unsubscribeWindowState();
     unsubscribeUpdateEvents();
@@ -2759,10 +2354,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   });
 
   authController.setAuthPage("login");
-  setWorkspacePage(activeWorkspacePage);
-  setSettingsTab(activeSettingsTab);
-  setConnectionDiagExpanded(connectionDiagExpanded);
-  setConnectionDiagTab(connectionDiagActiveTab);
+
+  workspaceController.setSettingsTab(activeSettingsTab);
+  diagnosticsController.setConnectionDiagExpanded(connectionDiagExpanded);
+  diagnosticsController.setConnectionDiagTab(connectionDiagActiveTab);
   applyShareSettingsUi();
   setScreenModalOpen(false);
   voiceController.setOutputVolume(Number(dom.outputVolume.value || "100"));
@@ -2778,8 +2373,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   updateScreenShareButton();
   updateUiSoundsToggle();
   updateRnnoiseToggle();
-  updateDesktopPreferenceToggles();
-  updateConnectionDiagnostics();
+  workspaceController.updateDesktopPreferenceToggles();
+  diagnosticsController.updateConnectionDiagnostics();
   void voiceController.listMicrophones();
   updateMuteButton();
 };

@@ -1,6 +1,6 @@
 {
   "name": "connect-together-desktop",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "repository": {
     "type": "git",
@@ -52,6 +52,7 @@
       "package.json"
     ],
     "win": {
+      "artifactName": "Connect-Together-Setup-${version}.${ext}",
       "target": [
         {
           "target": "nsis",

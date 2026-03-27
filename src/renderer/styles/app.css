@@ -764,6 +764,55 @@ button:active {
   cursor: wait;
 }
 
+.settings-updates-card {
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
+}
+
+.settings-update-summary {
+  color: #dbeafe;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-update-summary[data-tone="ok"] {
+  color: #a7f3d0;
+}
+
+.settings-update-summary[data-tone="warn"] {
+  color: #fde68a;
+}
+
+.settings-update-summary[data-tone="error"] {
+  color: #fecaca;
+}
+
+.settings-update-meta {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.settings-update-error summary {
+  cursor: pointer;
+  color: #fecaca;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-update-error pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.08);
+  border-radius: 10px;
+  color: #fee2e2;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+
 /* ── Participant Cards ── */
 .participant-stage-grid {
   display: grid;

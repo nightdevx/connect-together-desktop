@@ -121,6 +121,12 @@ export interface DomRefs {
   logoutButton: HTMLButtonElement;
   closeToTrayToggle: HTMLButtonElement;
   launchAtStartupToggle: HTMLButtonElement;
+  settingsUpdateSummary: HTMLElement;
+  settingsUpdateMeta: HTMLElement;
+  settingsUpdateCheckButton: HTMLButtonElement;
+  settingsUpdateInstallButton: HTMLButtonElement;
+  settingsUpdateErrorContainer: HTMLDetailsElement;
+  settingsUpdateErrorDetails: HTMLElement;
 }
 
 const requireElement = <T extends Element>(id: string): T => {
@@ -312,5 +318,17 @@ export const queryDomRefs = (): DomRefs => {
     launchAtStartupToggle: requireElement<HTMLButtonElement>(
       "launchAtStartupToggle",
     ),
+    settingsUpdateSummary: requireElement("settingsUpdateSummary"),
+    settingsUpdateMeta: requireElement("settingsUpdateMeta"),
+    settingsUpdateCheckButton: requireElement<HTMLButtonElement>(
+      "settingsUpdateCheckButton",
+    ),
+    settingsUpdateInstallButton: requireElement<HTMLButtonElement>(
+      "settingsUpdateInstallButton",
+    ),
+    settingsUpdateErrorContainer: requireElement<HTMLDetailsElement>(
+      "settingsUpdateErrorContainer",
+    ),
+    settingsUpdateErrorDetails: requireElement("settingsUpdateErrorDetails"),
   };
 };

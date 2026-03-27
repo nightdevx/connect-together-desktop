@@ -446,6 +446,24 @@ export const buildDesktopLayout = (): string => {
                     </div>
                   </div>
 
+                  <section id="settingsUpdatesCard" class="settings-updates-card mb-4 rounded-xl border border-border bg-surface-2/50 px-3 py-3">
+                    <h3 class="m-0 text-sm font-medium text-text-primary">Güncellemeler</h3>
+                    <p class="m-0 mt-1 text-[11px] text-text-muted">İstemci sürümünü buradan kontrol edebilir ve yeni sürüme geçebilirsin.</p>
+
+                    <p id="settingsUpdateSummary" class="settings-update-summary m-0 mt-3">Güncelleme durumu hazırlanıyor...</p>
+                    <p id="settingsUpdateMeta" class="settings-update-meta m-0 mt-1">-</p>
+
+                    <div class="mt-3 flex flex-wrap items-center gap-2">
+                      <button id="settingsUpdateCheckButton" class="btn-secondary h-9 text-xs" type="button">Güncelleme Kontrol Et</button>
+                      <button id="settingsUpdateInstallButton" class="btn-primary h-9 text-xs hidden" type="button">Güncelle</button>
+                    </div>
+
+                    <details id="settingsUpdateErrorContainer" class="settings-update-error hidden mt-3">
+                      <summary>Hata detayları</summary>
+                      <pre id="settingsUpdateErrorDetails" class="m-0 mt-2"></pre>
+                    </details>
+                  </section>
+
                   <div class="max-w-[220px]">
                     <button id="logoutButton" class="btn-danger w-full" type="button">Çıkış Yap</button>
                   </div>

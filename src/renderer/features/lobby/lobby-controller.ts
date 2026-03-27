@@ -4,7 +4,7 @@ import type {
 } from "../../types/desktop-api";
 import type { DomRefs } from "../../ui/dom";
 
-interface LobbyController {
+export interface LobbyController {
   getMembersMap: () => Map<string, LobbyMemberSnapshot>;
   resolveMemberName: (userId: string) => string;
   renderLobby: (lobby: LobbyStateSnapshot) => void;

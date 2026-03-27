@@ -409,7 +409,7 @@ export const createRemoteMediaUiController = (
 
       const audio = document.createElement("audio");
       audio.autoplay = true;
-      audio.playsInline = true;
+      audio.setAttribute("playsinline", "");
 
       container.appendChild(label);
       container.appendChild(audio);
