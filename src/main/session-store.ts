@@ -70,7 +70,10 @@ export class SessionStore {
       fs.writeFileSync(
         this.filePath,
         JSON.stringify(this.currentSession, null, 2),
-        "utf-8",
+        {
+          encoding: "utf-8",
+          mode: 0o600,
+        },
       );
     } catch {
       // no-op

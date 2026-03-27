@@ -2,7 +2,6 @@ import type { RtcSignalPayload } from "../../shared/contracts";
 import { createAuthViewController } from "../features/auth/auth-view-controller";
 import { createUiSoundController } from "../features/audio/ui-sound-controller";
 import { createLobbyController } from "../features/lobby/lobby-controller";
-import { subscribeRealtimeEvents } from "../features/realtime/realtime-controller";
 import { createVoiceController } from "../features/voice/voice-controller";
 import { createUpdaterViewController } from "../features/updater/updater-view-controller";
 import { createWorkspaceController } from "../features/workspace/workspace-controller";
@@ -15,24 +14,29 @@ import type {
 import type {
   DesktopApi,
   LobbyMemberSnapshot,
-  DesktopPreferences,
   DesktopRuntimeConfig,
   DesktopUpdateState,
   RegisteredUserSnapshot,
+  SessionSnapshot,
 } from "../types/desktop-api";
 import type { DomRefs } from "../ui/dom";
+import { bindAuthAndProfileForms } from "./bootstrap-auth-bindings";
+import { bindContextMenuAndParticipantAudioControls } from "./bootstrap-context-menu-bindings";
+import { bindMediaAndShareControls } from "./bootstrap-media-bindings";
+import { subscribeBootstrapRealtimeOrchestrator } from "./bootstrap-realtime-orchestrator";
+import {
+  createBootstrapShareModalController,
+  type ScreenCaptureKind,
+} from "./bootstrap-share-modal-controller";
+import { bindLogoutControl } from "./bootstrap-session-bindings";
+import { initializeUpdaterAndSession } from "./bootstrap-updater-session-init";
+import { bindVoiceSettingsControls } from "./bootstrap-voice-settings-bindings";
+import { createLifecycleScope } from "./lifecycle-scope";
 
 const getErrorMessage = (error?: { message?: string }): string => {
   return error?.message ?? "bilinmeyen hata";
 };
 
-type SettingsTab =
-  | "profile"
-  | "security"
-  | "voice"
-  | "camera"
-  | "broadcast"
-  | "session";
 type SpeakingDetectionMode = "auto" | "manual";
 const UI_SOUNDS_STORAGE_KEY = "ct.desktop.ui-sounds-enabled";
 const RNNOISE_ENABLED_STORAGE_KEY = "ct.desktop.rnnoise-enabled";
@@ -51,19 +55,6 @@ const MAX_MEDIA_DEBUG_LOG_ENTRIES = 280;
 const MAX_TOAST_COUNT = 4;
 const TOAST_AUTO_HIDE_MS = 4200;
 const DEFAULT_SPEAKING_THRESHOLD_PERCENT = 24;
-const FRIENDS_PRESENCE_REFRESH_MS = 2000;
-const USER_DIRECTORY_REFRESH_MS = 5000;
-
-type ScreenCaptureKind = "any" | "screen" | "window";
-type ShareModalMode = "camera" | "screen";
-
-interface CaptureSourceItem {
-  id: string;
-  name: string;
-  kind: "screen" | "window";
-  displayId: string | null;
-  thumbnailDataUrl: string | null;
-}
 
 interface ParticipantAudioSetting {
   muted: boolean;
@@ -154,6 +145,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const desktopApi = getDesktopApiOrThrow();
   const runtimeConfig: DesktopRuntimeConfig =
     await desktopApi.getRuntimeConfig();
+  const lifecycle = createLifecycleScope();
 
   let isMuted = false;
   let isHeadphoneMuted = false;
@@ -172,27 +164,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const latencySamplesMs: number[] = [];
   let selfUserId: string | null = null;
   const uiSoundController = createUiSoundController();
-  let activeWorkspacePage: "users" | "lobby" | "settings" = "lobby";
-  let activeSettingsTab: SettingsTab = "profile";
   let uiSoundsEnabled = true;
   let rnnoiseEnabled = true;
   let speakingDetectionMode: SpeakingDetectionMode = "auto";
   let manualSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
   let effectiveSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
-  let closeToTrayOnClose = false;
-  let launchAtStartup = false;
-  let gpuAccelerationEnabled = false;
   let cameraResolution = "1280x720";
   let cameraFps = "30";
   let inputGainPercent = 100;
   let screenResolution = "1920x1080";
   let screenFps = "30";
   let screenShareMode: ScreenCaptureKind = "any";
-  let modalScreenCaptureKind: "screen" | "window" = "screen";
   let cameraTestStream: MediaStream | null = null;
   let screenTestStream: MediaStream | null = null;
-  let screenCaptureSources: CaptureSourceItem[] = [];
-  let selectedScreenCaptureSourceId: string | null = null;
   let mediaDebugLogEntries: MediaDebugLogEntry[] = [];
   let participantAudioSettings = new Map<string, ParticipantAudioSetting>();
   let participantAudioMenuUserId: string | null = null;
@@ -488,6 +472,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     setStatus,
     onPageChanged: (page) => {
       if (page === "users") {
+        void refreshLobby(true);
         void directoryController.refreshRegisteredUsers(true);
       }
     },
@@ -637,48 +622,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   };
 
-  const setSettingsTab = (tab: SettingsTab): void => {
-    activeSettingsTab = tab;
-
-    dom.settingsTabProfile.classList.toggle("active", tab === "profile");
-    dom.settingsTabSecurity.classList.toggle("active", tab === "security");
-    dom.settingsTabVoice.classList.toggle("active", tab === "voice");
-    dom.settingsTabCamera.classList.toggle("active", tab === "camera");
-    dom.settingsTabBroadcast.classList.toggle("active", tab === "broadcast");
-    dom.settingsTabSession.classList.toggle("active", tab === "session");
-
-    dom.settingsPanelProfile.classList.toggle("hidden", tab !== "profile");
-    dom.settingsPanelSecurity.classList.toggle("hidden", tab !== "security");
-    dom.settingsPanelVoice.classList.toggle("hidden", tab !== "voice");
-    dom.settingsPanelCamera.classList.toggle("hidden", tab !== "camera");
-    dom.settingsPanelBroadcast.classList.toggle("hidden", tab !== "broadcast");
-    dom.settingsPanelSession.classList.toggle("hidden", tab !== "session");
-  };
-
-  const setWorkspacePage = (page: "users" | "lobby" | "settings"): void => {
-    activeWorkspacePage = page;
-    const showLobby = page === "lobby";
-    const showUsers = page === "users";
-    const showSettings = page === "settings";
-
-    dom.usersSidebar.classList.toggle("hidden", !showUsers);
-    dom.lobbySidebar.classList.toggle("hidden", !showLobby);
-    dom.settingsSidebar.classList.toggle("hidden", !showSettings);
-    dom.usersPage.classList.toggle("hidden", !showUsers);
-    dom.lobbyPage.classList.toggle("hidden", !showLobby);
-    dom.settingsPage.classList.toggle("hidden", !showSettings);
-    dom.navUsers.classList.toggle("active", showUsers);
-    dom.navLobby.classList.toggle("active", showLobby);
-    dom.navSettings.classList.toggle("active", showSettings);
-
-    if (showUsers) {
-      directoryController.renderUserDirectory();
-    }
-
-    if (showSettings) {
-    }
-  };
-
   const ensureBackgroundRealtimeConnection = async (): Promise<void> => {
     const result = await window.desktopApi.realtimeConnect();
     if (!result.ok) {
@@ -750,12 +693,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   const updateRnnoiseToggle = (): void => {
     syncSwitchButton(dom.rnnoiseToggle, rnnoiseEnabled);
-  };
-
-  const updateDesktopPreferenceToggles = (): void => {
-    syncSwitchButton(dom.closeToTrayToggle, closeToTrayOnClose);
-    syncSwitchButton(dom.launchAtStartupToggle, launchAtStartup);
-    syncSwitchButton(dom.gpuAccelerationToggle, gpuAccelerationEnabled);
   };
 
   const persistUiSoundsPreference = (): void => {
@@ -1025,17 +962,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     stopScreenTest();
   };
 
-  const applyWindowState = (isMaximized: boolean): void => {
-    dom.windowMaximize.classList.toggle("is-maximized", isMaximized);
-    dom.windowMaximize.title = isMaximized ? "Küçült" : "Büyüt";
-    dom.windowMaximize.setAttribute(
-      "aria-label",
-      isMaximized ? "Küçült" : "Büyüt",
-    );
-  };
-
-  const unsubscribeWindowState = desktopApi.onWindowStateChanged((payload) => {
-    applyWindowState(payload.isMaximized);
+  lifecycle.add(() => {
+    directoryController.stopFriendsPresenceAutoRefresh();
+  });
+  lifecycle.add(() => {
+    stopAllShareTests();
+  });
+  lifecycle.add(() => {
+    voiceController.destroy();
   });
 
   const updateQuickMicButton = (): void => {
@@ -1233,325 +1167,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     });
   }
 
-  let shareModalMode: ShareModalMode = "screen";
-  let screenModalResolver: ((confirmed: boolean) => void) | null = null;
-  let shareModalPreviewStream: MediaStream | null = null;
-
-  const stopShareModalPreview = (): void => {
-    if (shareModalPreviewStream) {
-      for (const track of shareModalPreviewStream.getTracks()) {
-        try {
-          track.stop();
-        } catch {
-          // no-op
-        }
-      }
-    }
-
-    shareModalPreviewStream = null;
-    dom.sharePreviewVideo.srcObject = null;
-    dom.sharePreviewVideo.classList.add("hidden");
-  };
-
-  const setScreenModalOpen = (open: boolean): void => {
-    dom.screenShareModal.classList.toggle("hidden", !open);
-    dom.screenShareModal.setAttribute("aria-hidden", open ? "false" : "true");
-
-    if (!open) {
-      stopShareModalPreview();
-      dom.sharePreviewImage.classList.add("hidden");
-      dom.sharePreviewImage.removeAttribute("src");
-      dom.sharePreviewHint.textContent = "Önizleme hazırlanıyor...";
-    }
-  };
-
-  const setShareModalMode = (mode: ShareModalMode): void => {
-    shareModalMode = mode;
-    const screenMode = mode === "screen";
-
-    dom.screenCaptureFilters.classList.toggle("hidden", !screenMode);
-    dom.screenCaptureSourceList.classList.toggle("hidden", !screenMode);
-    dom.screenCaptureTabMonitors.disabled = !screenMode;
-    dom.screenCaptureTabWindows.disabled = !screenMode;
-    dom.modalScreenResolutionSelect.disabled = !screenMode;
-    dom.modalScreenFpsSelect.disabled = !screenMode;
-    dom.screenMonitorSelect.disabled = !screenMode;
-    dom.screenCaptureRefreshButton.disabled = !screenMode;
-
-    if (screenMode) {
-      dom.shareModalTitle.textContent = "Ekran Paylaşımı Seçimi";
-      return;
-    }
-
-    dom.shareModalTitle.textContent = "Kamera Önizleme";
-    dom.sharePreviewHint.textContent =
-      "Kamera önizlemesi hazır olduğunda onaylayarak paylaşımı başlatabilirsin.";
-  };
-
-  const setScreenCaptureTab = (kind: "screen" | "window"): void => {
-    modalScreenCaptureKind = kind;
-    dom.screenCaptureTabMonitors.classList.toggle("active", kind === "screen");
-    dom.screenCaptureTabMonitors.setAttribute(
-      "aria-selected",
-      kind === "screen" ? "true" : "false",
-    );
-    dom.screenCaptureTabWindows.classList.toggle("active", kind === "window");
-    dom.screenCaptureTabWindows.setAttribute(
-      "aria-selected",
-      kind === "window" ? "true" : "false",
-    );
-
-    dom.screenMonitorSelect.disabled =
-      shareModalMode !== "screen" || kind !== "screen";
-  };
-
-  const updateSelectedScreenPreviewImage = (): void => {
-    const selected = screenCaptureSources.find(
-      (source) => source.id === selectedScreenCaptureSourceId,
-    );
-
-    if (!selected) {
-      dom.sharePreviewImage.classList.add("hidden");
-      dom.sharePreviewImage.removeAttribute("src");
-      dom.sharePreviewHint.textContent =
-        "Önizleme için bir ekran veya pencere seçin.";
-      return;
-    }
-
-    dom.sharePreviewVideo.classList.add("hidden");
-    dom.sharePreviewImage.classList.remove("hidden");
-    dom.sharePreviewImage.src =
-      selected.thumbnailDataUrl ??
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='960' height='540'%3E%3Crect width='100%25' height='100%25' fill='%23111425'/%3E%3C/svg%3E";
-    dom.sharePreviewHint.textContent = `${selected.name} önizleniyor.`;
-  };
-
-  const startCameraShareModalPreview = async (): Promise<boolean> => {
-    stopShareModalPreview();
-    dom.sharePreviewImage.classList.add("hidden");
-
-    try {
-      shareModalPreviewStream = await voiceController.createCameraTestStream(
-        getCameraShareOptions(),
-      );
-      dom.sharePreviewVideo.classList.remove("hidden");
-      dom.sharePreviewVideo.srcObject = shareModalPreviewStream;
-      await dom.sharePreviewVideo.play().catch(() => {
-        // no-op
-      });
-      dom.sharePreviewHint.textContent =
-        "Kamera önizlemesi aktif. Onaylarsan paylaşım başlatılacak.";
-      return true;
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "bilinmeyen hata";
-      setStatus(`Kamera önizlemesi açılamadı: ${message}`, true);
-      return false;
-    }
-  };
-
-  const renderScreenCaptureSourceList = (): void => {
-    const currentKind = modalScreenCaptureKind;
-    const selectedMonitor = dom.screenMonitorSelect.value;
-
-    const filtered = screenCaptureSources.filter((source) => {
-      if (source.kind !== currentKind) {
-        return false;
-      }
-
-      if (
-        selectedMonitor !== "all" &&
-        source.kind === "screen" &&
-        source.displayId !== selectedMonitor
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
-    dom.screenCaptureSourceList.innerHTML = "";
-
-    if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className =
-        "rounded-xl border border-border bg-surface-2/40 p-3 text-xs text-text-muted";
-      empty.textContent = "Bu filtrede paylaşılabilir kaynak bulunamadı.";
-      dom.screenCaptureSourceList.appendChild(empty);
-      selectedScreenCaptureSourceId = null;
-      updateSelectedScreenPreviewImage();
-      return;
-    }
-
-    if (
-      !selectedScreenCaptureSourceId ||
-      !filtered.some((item) => item.id === selectedScreenCaptureSourceId)
-    ) {
-      selectedScreenCaptureSourceId = filtered[0]?.id ?? null;
-    }
-
-    for (const source of filtered) {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "capture-source-card";
-      card.classList.toggle(
-        "selected",
-        source.id === selectedScreenCaptureSourceId,
-      );
-
-      const thumb = document.createElement("img");
-      thumb.className = "capture-source-thumb";
-      thumb.alt = source.name;
-      thumb.src =
-        source.thumbnailDataUrl ??
-        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='100%25' height='100%25' fill='%23111425'/%3E%3C/svg%3E";
-
-      const title = document.createElement("div");
-      title.className = "text-sm text-text-primary font-medium truncate";
-      title.textContent = source.name;
-
-      const meta = document.createElement("div");
-      meta.className = "capture-source-meta";
-      const kind = document.createElement("span");
-      kind.textContent = source.kind === "screen" ? "Tüm ekran" : "Pencere";
-      const display = document.createElement("span");
-      display.textContent = source.displayId
-        ? `Monitör ${source.displayId}`
-        : "Monitör -";
-      meta.appendChild(kind);
-      meta.appendChild(display);
-
-      card.appendChild(thumb);
-      card.appendChild(title);
-      card.appendChild(meta);
-      card.addEventListener("click", () => {
-        selectedScreenCaptureSourceId = source.id;
-        renderScreenCaptureSourceList();
-      });
-
-      dom.screenCaptureSourceList.appendChild(card);
-    }
-
-    updateSelectedScreenPreviewImage();
-  };
-
-  const refreshScreenCaptureSources = async (): Promise<boolean> => {
-    const kinds = [modalScreenCaptureKind] as Array<"screen" | "window">;
-    const result = await window.desktopApi.mediaListCaptureSources({ kinds });
-    if (!result.ok || !result.data) {
-      setStatus(
-        `Ekran kaynakları alınamadı: ${getErrorMessage(result.error)}`,
-        true,
-      );
-      return false;
-    }
-
-    screenCaptureSources = result.data.sources;
-
-    const monitors = Array.from(
-      new Set(
-        screenCaptureSources
-          .filter((source) => source.kind === "screen")
-          .map((source) => source.displayId)
-          .filter((value): value is string => Boolean(value)),
-      ),
-    );
-
-    dom.screenMonitorSelect.innerHTML = "";
-    const allOption = document.createElement("option");
-    allOption.value = "all";
-    allOption.textContent = "Tümü";
-    dom.screenMonitorSelect.appendChild(allOption);
-
-    for (const monitorId of monitors) {
-      const option = document.createElement("option");
-      option.value = monitorId;
-      option.textContent = `Monitör ${monitorId}`;
-      dom.screenMonitorSelect.appendChild(option);
-    }
-
-    if (modalScreenCaptureKind === "window") {
-      dom.screenMonitorSelect.value = "all";
-    }
-
-    dom.screenMonitorSelect.disabled = modalScreenCaptureKind !== "screen";
-
-    renderScreenCaptureSourceList();
-    return true;
-  };
-
-  const requestScreenCaptureSourceSelection = async (
-    confirmLabel = "Onayla ve Paylaş",
-  ): Promise<CaptureSourceItem | null> => {
-    setShareModalMode("screen");
-    dom.screenShareModalConfirm.textContent = confirmLabel;
-    const initialKind = screenShareMode === "window" ? "window" : "screen";
-    setScreenCaptureTab(initialKind);
-    dom.modalScreenResolutionSelect.value = screenResolution;
-    dom.modalScreenFpsSelect.value = screenFps;
-    const refreshed = await refreshScreenCaptureSources();
-    if (!refreshed) {
-      return null;
-    }
-
-    setScreenModalOpen(true);
-    const confirmed = await new Promise<boolean>((resolve) => {
-      screenModalResolver = resolve;
-    });
-
-    if (!confirmed) {
-      return null;
-    }
-
-    const selected = screenCaptureSources.find(
-      (source) => source.id === selectedScreenCaptureSourceId,
-    );
-
-    return selected ?? null;
-  };
-
-  const requestCameraShareConfirmation = async (): Promise<boolean> => {
-    setShareModalMode("camera");
-    dom.screenShareModalConfirm.textContent = "Onayla ve Paylaş";
-    setScreenModalOpen(true);
-
-    const confirmationPromise = new Promise<boolean>((resolve) => {
-      screenModalResolver = resolve;
-    });
-
-    const previewReady = await startCameraShareModalPreview();
-    if (!previewReady) {
-      completeScreenModalSelection(false);
-      return confirmationPromise;
-    }
-
-    if (dom.screenShareModal.classList.contains("hidden")) {
-      completeScreenModalSelection(false);
-    }
-
-    return confirmationPromise;
-  };
-
-  const completeScreenModalSelection = (confirmed: boolean): void => {
-    if (!screenModalResolver) {
-      setScreenModalOpen(false);
-      return;
-    }
-
-    if (
-      confirmed &&
-      shareModalMode === "screen" &&
-      !selectedScreenCaptureSourceId
-    ) {
-      setStatus("Paylaşım için bir kaynak seçin", true);
-      return;
-    }
-
-    const resolver = screenModalResolver;
-    screenModalResolver = null;
-    setScreenModalOpen(false);
-    resolver(confirmed);
-  };
+  const shareModalController = createBootstrapShareModalController({
+    dom,
+    desktopApi,
+    setStatus,
+    getErrorMessage,
+    getScreenShareMode: () => screenShareMode,
+    getScreenResolution: () => screenResolution,
+    getScreenFps: () => screenFps,
+    getCameraShareOptions,
+    getScreenShareOptions,
+    createCameraPreviewStream: (options) =>
+      voiceController.createCameraTestStream(options),
+  });
 
   const setSelectValueSafely = (
     select: HTMLSelectElement,
@@ -1587,7 +1215,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       "1920x1080",
     );
     screenFps = setSelectValueSafely(dom.modalScreenFpsSelect, screenFps, "30");
-    setScreenCaptureTab(screenShareMode === "window" ? "window" : "screen");
+    shareModalController.setScreenCaptureTab(
+      screenShareMode === "window" ? "window" : "screen",
+    );
   };
 
   const handleCameraShareToggle = async (): Promise<void> => {
@@ -1610,7 +1240,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    const confirmed = await requestCameraShareConfirmation();
+    const confirmed =
+      await shareModalController.requestCameraShareConfirmation();
     if (!confirmed) {
       setStatus("Kamera paylaşımı iptal edildi", false);
       return;
@@ -1657,7 +1288,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    const selectedSource = await requestScreenCaptureSourceSelection();
+    const selectedSource =
+      await shareModalController.requestScreenCaptureSourceSelection();
     if (!selectedSource) {
       setStatus("Ekran paylaşımı seçimi iptal edildi", false);
       return;
@@ -1714,7 +1346,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     const selectedSource =
-      await requestScreenCaptureSourceSelection("Onayla ve Test Et");
+      await shareModalController.requestScreenCaptureSourceSelection(
+        "Onayla ve Test Et",
+      );
     if (!selectedSource) {
       setStatus("Ekran testi seçimi iptal edildi", false);
       return;
@@ -1950,142 +1584,87 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     return true;
   };
 
-  const unsubscribeRealtime = subscribeRealtimeEvents({
-    onConnection: (status, detail) => {
-      if (status === "connected") {
-        latestLobbyRevision = 0;
-        realtimeConnectionStatus = "connected";
-        setConnectionState("Realtime bağlı", "ok");
-        diagnosticsController.updateConnectionDiagnostics();
-        return;
-      }
-
-      if (status === "disconnected") {
-        realtimeConnectionStatus = "disconnected";
-        realtimeLatencyMs = null;
-        realtimePacketLossPercent = 0;
-        latencySamplesMs.length = 0;
-        setConnectionState("Realtime bağlantısı koptu", "warn");
-        if (detail) {
-          setStatus(`Realtime bağlantısı kesildi: ${detail}`, true);
-        }
-        voiceController.cleanupForLobbyExit();
-        resetRemoteMediaAnnouncementState();
-        stopAllShareTests();
-        voiceConnected = false;
-        cameraSharing = false;
-        screenSharing = false;
-        updateQuickConnectionButton();
-        updateCameraShareButton();
-        updateScreenShareButton();
-        diagnosticsController.updateConnectionDiagnostics();
-        return;
-      }
-
-      realtimeConnectionStatus = "error";
-      realtimeLatencyMs = null;
-      realtimePacketLossPercent = 0;
-      latencySamplesMs.length = 0;
-      setConnectionState("Realtime hatası", "error");
-      setStatus(`Realtime hatası: ${detail || "bilinmeyen hata"}`, true);
+  const unsubscribeRealtime = subscribeBootstrapRealtimeOrchestrator({
+    shouldApplyLobbyRevision,
+    applySelfLobbyRealtimeOverrides,
+    syncRemoteMediaAnnouncements,
+    isRemoteMediaAnnouncementInitialized: () =>
+      remoteMediaAnnouncementInitialized,
+    getSelfUserId: () => authController.getSelfUserId(),
+    setStatus,
+    playUiSound: (effect) => {
+      uiSoundController.play(effect);
+    },
+    setConnectionState,
+    onConnected: () => {
+      latestLobbyRevision = 0;
+      realtimeConnectionStatus = "connected";
+    },
+    setRealtimeConnectionStatus: (status) => {
+      realtimeConnectionStatus = status;
+    },
+    setRealtimeLatencyMs: (value) => {
+      realtimeLatencyMs = value;
+    },
+    setRealtimePacketLossPercent: (value) => {
+      realtimePacketLossPercent = value;
+    },
+    setRealtimeTransport: (value) => {
+      realtimeTransport = value;
+    },
+    setRealtimeReconnectAttempts: (value) => {
+      realtimeReconnectAttempts = value;
+    },
+    latencySamplesMs,
+    resetRemoteMediaAnnouncementState,
+    handleDisconnectedState: () => {
+      voiceController.cleanupForLobbyExit();
       resetRemoteMediaAnnouncementState();
+      stopAllShareTests();
+      voiceConnected = false;
+      cameraSharing = false;
+      screenSharing = false;
+      updateQuickConnectionButton();
+      updateCameraShareButton();
+      updateScreenShareButton();
+    },
+    updateDiagnostics: () => {
       diagnosticsController.updateConnectionDiagnostics();
     },
-    onConnectionMetrics: (payload) => {
-      realtimeLatencyMs = payload.connected ? payload.latencyMs : null;
-      realtimePacketLossPercent = payload.connected
-        ? payload.packetLossPercent
-        : 0;
-      realtimeTransport = payload.transport;
-      realtimeReconnectAttempts = payload.reconnectAttempts;
-
-      if (payload.connected && typeof payload.latencyMs === "number") {
-        latencySamplesMs.push(Math.max(0, Math.round(payload.latencyMs)));
-        if (latencySamplesMs.length > 30) {
-          latencySamplesMs.shift();
-        }
-      }
-
-      if (payload.connected) {
-        realtimeConnectionStatus = "connected";
-      }
-
-      diagnosticsController.updateConnectionDiagnostics();
-    },
-    onLobbyState: (members, revision) => {
-      if (!shouldApplyLobbyRevision(revision)) {
-        return;
-      }
-
-      const normalizedMembers = members.map((member) =>
-        applySelfLobbyRealtimeOverrides(member),
-      );
-
-      syncRemoteMediaAnnouncements(normalizedMembers);
+    onLobbyStateApplied: (members) => {
       lobbyController.renderLobby({
-        members: normalizedMembers,
-        size: normalizedMembers.length,
+        members,
+        size: members.length,
       });
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
-    onMemberJoined: (member, revision) => {
-      if (!shouldApplyLobbyRevision(revision)) {
-        return;
-      }
-
-      const normalizedMember = applySelfLobbyRealtimeOverrides(member);
-
-      setStatus("Lobiye bir üye katıldı", false);
-
-      const selfId = authController.getSelfUserId();
-      if (
-        remoteMediaAnnouncementInitialized &&
-        normalizedMember.userId !== selfId &&
-        (normalizedMember.cameraEnabled || normalizedMember.screenSharing)
-      ) {
-        uiSoundController.play("participant-share-on");
-      }
-
-      remoteMediaStateByUserId.set(normalizedMember.userId, {
-        cameraEnabled: normalizedMember.cameraEnabled === true,
-        screenSharing: normalizedMember.screenSharing === true,
+    onMemberJoinedApplied: (member) => {
+      remoteMediaStateByUserId.set(member.userId, {
+        cameraEnabled: member.cameraEnabled === true,
+        screenSharing: member.screenSharing === true,
       });
-      lobbyController.addOrUpdateMember(normalizedMember);
+      lobbyController.addOrUpdateMember(member);
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
-    onMemberUpdated: (member, revision) => {
-      if (!shouldApplyLobbyRevision(revision)) {
-        return;
-      }
-
-      const normalizedMember = applySelfLobbyRealtimeOverrides(member);
-
-      remoteMediaStateByUserId.set(normalizedMember.userId, {
-        cameraEnabled: normalizedMember.cameraEnabled === true,
-        screenSharing: normalizedMember.screenSharing === true,
+    onMemberUpdatedApplied: (member) => {
+      remoteMediaStateByUserId.set(member.userId, {
+        cameraEnabled: member.cameraEnabled === true,
+        screenSharing: member.screenSharing === true,
       });
-      lobbyController.addOrUpdateMember(normalizedMember);
+      lobbyController.addOrUpdateMember(member);
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
-    onMemberLeft: (userId, revision) => {
-      if (!shouldApplyLobbyRevision(revision)) {
-        return;
-      }
-
-      setStatus("Bir üye lobiden ayrıldı", false);
+    onMemberLeftApplied: (userId) => {
       remoteMediaStateByUserId.delete(userId);
       lobbyController.removeMember(userId);
       directoryController.renderUserDirectory();
       voiceController.onMemberLeft(userId);
     },
-    onAutoRejoin: () => {
-      setStatus("Bağlantı geri geldi, lobi üyeliği yenilendi", false);
-    },
-    onRtcSignal: (payload) => {
-      void voiceController.handleIncomingSignal(payload as RtcSignalPayload);
+    onRtcSignal: (payload: RtcSignalPayload) => {
+      void voiceController.handleIncomingSignal(payload);
     },
     onProducerAvailable: (payload) => {
       void voiceController.handleProducerAvailable(payload);
@@ -2093,116 +1672,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     onProducerClosed: (producerId) => {
       voiceController.handleProducerClosed(producerId);
     },
-    onSystemError: (message) => {
-      setStatus(`Sistem hatası: ${message}`, true);
-    },
   });
+  lifecycle.add(unsubscribeRealtime);
 
   authController.bindNavigationEvents();
 
-  try {
-    const initialWindowState = await desktopApi.getWindowState();
-    applyWindowState(initialWindowState.isMaximized);
-  } catch {
-    // no-op
-  }
-
-  try {
-    const preferences: DesktopPreferences =
-      await desktopApi.getDesktopPreferences();
-    closeToTrayOnClose = preferences.closeToTrayOnClose;
-    launchAtStartup = preferences.launchAtStartup;
-    gpuAccelerationEnabled = preferences.gpuAccelerationEnabled;
-  } catch {
-    closeToTrayOnClose = false;
-    launchAtStartup = false;
-    gpuAccelerationEnabled = false;
-  }
-
-  dom.windowMinimize.addEventListener("click", () => {
-    void desktopApi.windowMinimize();
-  });
-
-  dom.windowMaximize.addEventListener("click", async () => {
-    try {
-      const state = await desktopApi.windowToggleMaximize();
-      applyWindowState(state.isMaximized);
-    } catch {
-      // no-op
-    }
-  });
-
-  dom.windowClose.addEventListener("click", () => {
-    void desktopApi.windowClose();
-  });
-
-  dom.closeToTrayToggle.addEventListener("click", async () => {
-    closeToTrayOnClose = !closeToTrayOnClose;
-    try {
-      const next = await desktopApi.updateDesktopPreferences({
-        closeToTrayOnClose,
-      });
-      closeToTrayOnClose = next.closeToTrayOnClose;
-      launchAtStartup = next.launchAtStartup;
-      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
-      updateDesktopPreferenceToggles();
-      setStatus(
-        closeToTrayOnClose
-          ? "Kapat tusu tepsiye gonderme moduna alindi"
-          : "Kapat tusu uygulamayi tamamen kapatacak",
-        false,
-      );
-    } catch {
-      closeToTrayOnClose = !closeToTrayOnClose;
-      updateDesktopPreferenceToggles();
-      setStatus("Tepsi ayari guncellenemedi", true);
-    }
-  });
-
-  dom.launchAtStartupToggle.addEventListener("click", async () => {
-    launchAtStartup = !launchAtStartup;
-    try {
-      const next = await desktopApi.updateDesktopPreferences({
-        launchAtStartup,
-      });
-      closeToTrayOnClose = next.closeToTrayOnClose;
-      launchAtStartup = next.launchAtStartup;
-      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
-      updateDesktopPreferenceToggles();
-      setStatus(
-        launchAtStartup
-          ? "Windows baslangicinda otomatik calisma acildi"
-          : "Windows baslangicinda otomatik calisma kapatildi",
-        false,
-      );
-    } catch {
-      launchAtStartup = !launchAtStartup;
-      updateDesktopPreferenceToggles();
-      setStatus("Baslangic ayari guncellenemedi", true);
-    }
-  });
-
-  dom.gpuAccelerationToggle.addEventListener("click", async () => {
-    gpuAccelerationEnabled = !gpuAccelerationEnabled;
-    try {
-      const next = await desktopApi.updateDesktopPreferences({
-        gpuAccelerationEnabled,
-      });
-      closeToTrayOnClose = next.closeToTrayOnClose;
-      launchAtStartup = next.launchAtStartup;
-      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
-      updateDesktopPreferenceToggles();
-      setStatus(
-        gpuAccelerationEnabled
-          ? "GPU hizlandirma acildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin."
-          : "GPU hizlandirma kapatildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin.",
-        false,
-      );
-    } catch {
-      gpuAccelerationEnabled = !gpuAccelerationEnabled;
-      updateDesktopPreferenceToggles();
-      setStatus("GPU hizlandirma ayari guncellenemedi", true);
-    }
+  workspaceController.bindEvents();
+  await workspaceController.initialize();
+  lifecycle.add(() => {
+    workspaceController.cleanup();
   });
 
   dom.gpuRestartButton.addEventListener("click", async () => {
@@ -2226,84 +1704,18 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   });
 
-  dom.navUsers.addEventListener("click", () => {
-    workspaceController.setWorkspacePage("users");
-    void refreshLobby(true);
-    void directoryController.refreshRegisteredUsers(true);
+  bindContextMenuAndParticipantAudioControls({
+    dom,
+    lifecycle,
+    getParticipantAudioMenuUserId: () => participantAudioMenuUserId,
+    closeParticipantAudioMenu,
+    resolveContextMenuUserId,
+    openParticipantAudioMenu,
+    toggleParticipantMute,
+    updateParticipantAudioVolume: handleParticipantAudioVolumeUpdate,
   });
 
-  dom.navLobby.addEventListener("click", () => {
-    workspaceController.setWorkspacePage("lobby");
-  });
-
-  dom.navSettings.addEventListener("click", () => {
-    workspaceController.setWorkspacePage("settings");
-  });
-
-  dom.settingsTabProfile.addEventListener("click", () => {
-    workspaceController.setSettingsTab("profile");
-  });
-
-  dom.settingsTabSecurity.addEventListener("click", () => {
-    workspaceController.setSettingsTab("security");
-  });
-
-  dom.settingsTabVoice.addEventListener("click", () => {
-    workspaceController.setSettingsTab("voice");
-  });
-
-  dom.settingsTabCamera.addEventListener("click", () => {
-    workspaceController.setSettingsTab("camera");
-  });
-
-  dom.settingsTabBroadcast.addEventListener("click", () => {
-    workspaceController.setSettingsTab("broadcast");
-  });
-
-  dom.settingsTabSession.addEventListener("click", () => {
-    workspaceController.setSettingsTab("session");
-  });
-
-  document.addEventListener("click", (event) => {
-    if (participantAudioMenuUserId === null) {
-      return;
-    }
-
-    const target = event.target;
-    if (!(target instanceof Node)) {
-      closeParticipantAudioMenu();
-      return;
-    }
-
-    if (dom.participantAudioMenu.contains(target)) {
-      return;
-    }
-
-    closeParticipantAudioMenu();
-  });
-
-  document.addEventListener("contextmenu", (event) => {
-    if (participantAudioMenuUserId === null) {
-      return;
-    }
-
-    const target = event.target;
-    if (target instanceof Node && dom.participantAudioMenu.contains(target)) {
-      return;
-    }
-
-    if (resolveContextMenuUserId(target)) {
-      return;
-    }
-
-    closeParticipantAudioMenu();
-  });
-
-  dom.quickMicToggle.addEventListener("click", async () => {
-    await setMicMuted(!isMuted);
-  });
-
-  dom.quickHeadphoneToggle.addEventListener("click", async () => {
+  const handleQuickHeadphoneToggle = async (): Promise<void> => {
     isHeadphoneMuted = !isHeadphoneMuted;
     voiceController.setOutputMuted(isHeadphoneMuted);
 
@@ -2335,9 +1747,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         : "Kulaklık çıkışı tekrar açıldı",
       false,
     );
-  });
+  };
 
-  dom.uiSoundsToggle.addEventListener("click", () => {
+  const handleUiSoundsToggle = (): void => {
     uiSoundsEnabled = !uiSoundsEnabled;
     uiSoundController.setEnabled(uiSoundsEnabled);
     updateUiSoundsToggle();
@@ -2348,77 +1760,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         : "Arayüz sesleri kapatıldı",
       false,
     );
-  });
-
-  const handleParticipantContextMenu = (event: MouseEvent): void => {
-    const userId = resolveContextMenuUserId(event.target);
-    if (!userId) {
-      return;
-    }
-
-    event.preventDefault();
-    openParticipantAudioMenu(userId, event.clientX, event.clientY);
   };
 
-  dom.members.addEventListener("contextmenu", handleParticipantContextMenu);
-  dom.participantGrid.addEventListener(
-    "contextmenu",
-    handleParticipantContextMenu,
-  );
-  dom.usersDirectoryList.addEventListener(
-    "contextmenu",
-    handleParticipantContextMenu,
-  );
-
-  dom.participantAudioMuteToggle.addEventListener("click", () => {
-    const userId = participantAudioMenuUserId;
-    if (!userId) {
-      return;
-    }
-
-    toggleParticipantMute(userId);
-  });
-
-  dom.participantAudioVolumeSlider.addEventListener("input", () => {
-    const userId = participantAudioMenuUserId;
-    if (!userId) {
-      return;
-    }
-
-    handleParticipantAudioVolumeUpdate(
-      userId,
-      Number(dom.participantAudioVolumeSlider.value || "100"),
-    );
-  });
-
-  dom.participantAudioPreset100.addEventListener("click", () => {
-    const userId = participantAudioMenuUserId;
-    if (!userId) {
-      return;
-    }
-
-    handleParticipantAudioVolumeUpdate(userId, 100);
-  });
-
-  dom.participantAudioPreset150.addEventListener("click", () => {
-    const userId = participantAudioMenuUserId;
-    if (!userId) {
-      return;
-    }
-
-    handleParticipantAudioVolumeUpdate(userId, 150);
-  });
-
-  dom.participantAudioPreset200.addEventListener("click", () => {
-    const userId = participantAudioMenuUserId;
-    if (!userId) {
-      return;
-    }
-
-    handleParticipantAudioVolumeUpdate(userId, 200);
-  });
-
-  dom.rnnoiseToggle.addEventListener("click", async () => {
+  const handleRnnoiseToggle = async (): Promise<void> => {
     const nextValue = !rnnoiseEnabled;
     dom.rnnoiseToggle.disabled = true;
     try {
@@ -2440,7 +1784,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     } finally {
       dom.rnnoiseToggle.disabled = false;
     }
-  });
+  };
 
   dom.quickConnectionToggle.addEventListener("click", async () => {
     if (voiceConnected) {
@@ -2455,440 +1799,237 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   });
 
-  dom.quickCameraToggle.addEventListener("click", () => {
-    void handleCameraShareToggle();
+  bindVoiceSettingsControls({
+    dom,
+    onQuickMicToggle: async () => {
+      await setMicMuted(!isMuted);
+    },
+    onQuickHeadphoneToggle: handleQuickHeadphoneToggle,
+    onUiSoundsToggle: handleUiSoundsToggle,
+    onRnnoiseToggle: handleRnnoiseToggle,
+    onMicrophoneChange: async (deviceId) => {
+      try {
+        await voiceController.handleMicrophoneChange(deviceId);
+      } catch {
+        setStatus("Mikrofon değiştirilemedi", true);
+      }
+    },
+    onMicTestToggle: async () => {
+      try {
+        return await voiceController.toggleMicTest();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "bilinmeyen hata";
+        setStatus(`Ses testi başlatılamadı: ${message}`, true);
+        return false;
+      }
+    },
+    onOutputVolumeInput: (value) => {
+      voiceController.setOutputVolume(value);
+      updateOutputVolumeText(value);
+    },
+    onInputGainInput: (value) => {
+      inputGainPercent = clampInputGainPercent(value);
+      updateInputGainText(inputGainPercent);
+    },
+    onInputGainChange: (value) => {
+      inputGainPercent = clampInputGainPercent(value);
+      updateInputGainText(inputGainPercent);
+      persistInputGainPreference();
+      void voiceController
+        .setInputGain(inputGainPercent)
+        .then(() => {
+          setStatus(
+            `Mikrofon ses kazancı %${inputGainPercent} olarak ayarlandı`,
+            false,
+          );
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "bilinmeyen hata";
+          setStatus(`Mikrofon ses kazancı ayarlanamadı: ${message}`, true);
+        });
+    },
+    onSpeakingModeChange: (value) => {
+      speakingDetectionMode = normalizeDetectionMode(value);
+      voiceController.setSpeakingDetectionMode(speakingDetectionMode);
+      updateSpeakingThresholdUi();
+      persistSpeakingDetectionPreference();
+      setStatus(
+        speakingDetectionMode === "auto"
+          ? "Ses algılama otomatik moda alındı"
+          : "Ses algılama manuel moda alındı",
+        false,
+      );
+    },
+    onSpeakingThresholdInput: (value) => {
+      manualSpeakingThresholdPercent = clampThresholdPercent(value);
+      voiceController.setManualSpeakingThreshold(
+        manualSpeakingThresholdPercent,
+      );
+      updateSpeakingThresholdUi();
+      persistSpeakingDetectionPreference();
+    },
+    onSpeakingThresholdChange: () => {
+      setStatus(
+        `Manuel konuşma eşiği %${manualSpeakingThresholdPercent} olarak ayarlandı`,
+        false,
+      );
+    },
+    defaultSpeakingThresholdPercent: DEFAULT_SPEAKING_THRESHOLD_PERCENT,
   });
 
-  dom.quickScreenToggle.addEventListener("click", () => {
-    void handleScreenShareToggle();
+  bindMediaAndShareControls({
+    dom,
+    normalizeScreenCaptureKind,
+    setCameraResolution: (value) => {
+      cameraResolution = value;
+    },
+    setCameraFps: (value) => {
+      cameraFps = value;
+    },
+    setScreenResolution: (value) => {
+      screenResolution = value;
+    },
+    setScreenFps: (value) => {
+      screenFps = value;
+    },
+    getScreenShareMode: () => screenShareMode,
+    setScreenShareMode: (value) => {
+      screenShareMode = value;
+    },
+    setScreenCaptureTab: shareModalController.setScreenCaptureTab,
+    persistSharePreferences,
+    onQuickCameraToggle: () => {
+      void handleCameraShareToggle();
+    },
+    onQuickScreenToggle: () => {
+      void handleScreenShareToggle();
+    },
+    onCameraTestToggle: () => {
+      void runCameraTest();
+    },
+    onScreenTestToggle: () => {
+      void runScreenTest();
+    },
+    completeScreenModalSelection:
+      shareModalController.completeScreenModalSelection,
+    refreshScreenCaptureSources: () => {
+      void shareModalController.refreshScreenCaptureSources();
+    },
+    renderScreenCaptureSourceList:
+      shareModalController.renderScreenCaptureSourceList,
+    clearMediaDebugLogs,
+    copyMediaDebugLogs: () => {
+      void copyMediaDebugLogs();
+    },
   });
 
-  dom.cameraResolutionSelect.addEventListener("change", () => {
-    cameraResolution = dom.cameraResolutionSelect.value;
-    persistSharePreferences();
-  });
-
-  dom.cameraFpsSelect.addEventListener("change", () => {
-    cameraFps = dom.cameraFpsSelect.value;
-    persistSharePreferences();
-  });
-
-  dom.screenResolutionSelect.addEventListener("change", () => {
-    screenResolution = dom.screenResolutionSelect.value;
-    dom.modalScreenResolutionSelect.value = screenResolution;
-    persistSharePreferences();
-  });
-
-  dom.screenFpsSelect.addEventListener("change", () => {
-    screenFps = dom.screenFpsSelect.value;
-    dom.modalScreenFpsSelect.value = screenFps;
-    persistSharePreferences();
-  });
-
-  dom.screenShareModeSelect.addEventListener("change", () => {
-    screenShareMode = normalizeScreenCaptureKind(
-      dom.screenShareModeSelect.value,
-    );
-    if (screenShareMode === "screen" || screenShareMode === "window") {
-      setScreenCaptureTab(screenShareMode);
-    }
-    persistSharePreferences();
-  });
-
-  dom.modalScreenResolutionSelect.addEventListener("change", () => {
-    screenResolution = dom.modalScreenResolutionSelect.value;
-    dom.screenResolutionSelect.value = screenResolution;
-    persistSharePreferences();
-  });
-
-  dom.modalScreenFpsSelect.addEventListener("change", () => {
-    screenFps = dom.modalScreenFpsSelect.value;
-    dom.screenFpsSelect.value = screenFps;
-    persistSharePreferences();
-  });
-
-  dom.cameraTestToggle.addEventListener("click", () => {
-    void runCameraTest();
-  });
-
-  dom.screenTestToggle.addEventListener("click", () => {
-    void runScreenTest();
-  });
-
-  dom.screenShareModalClose.addEventListener("click", () => {
-    completeScreenModalSelection(false);
-  });
-
-  dom.screenShareModalCancel.addEventListener("click", () => {
-    completeScreenModalSelection(false);
-  });
-
-  dom.screenShareModalConfirm.addEventListener("click", () => {
-    completeScreenModalSelection(true);
-  });
-
-  dom.screenCaptureRefreshButton.addEventListener("click", () => {
-    void refreshScreenCaptureSources();
-  });
-
-  dom.mediaDebugClearButton.addEventListener("click", () => {
-    clearMediaDebugLogs();
-  });
-
-  dom.mediaDebugCopyButton.addEventListener("click", () => {
-    void copyMediaDebugLogs();
-  });
-
-  dom.screenCaptureTabMonitors.addEventListener("click", () => {
-    setScreenCaptureTab("screen");
-    screenShareMode = "screen";
-    dom.screenShareModeSelect.value = screenShareMode;
-    persistSharePreferences();
-    void refreshScreenCaptureSources();
-  });
-
-  dom.screenCaptureTabWindows.addEventListener("click", () => {
-    setScreenCaptureTab("window");
-    screenShareMode = "window";
-    dom.screenShareModeSelect.value = screenShareMode;
-    persistSharePreferences();
-    void refreshScreenCaptureSources();
-  });
-
-  dom.screenMonitorSelect.addEventListener("change", () => {
-    renderScreenCaptureSourceList();
-  });
-
-  dom.screenShareModal.addEventListener("click", (event) => {
-    if (event.target === dom.screenShareModal) {
-      completeScreenModalSelection(false);
-    }
-  });
-
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
+  lifecycle.on(window, "keydown", (event) => {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key === "Escape") {
       if (participantAudioMenuUserId !== null) {
         closeParticipantAudioMenu();
       }
-      completeScreenModalSelection(false);
+      shareModalController.completeScreenModalSelection(false);
     }
   });
 
-  dom.loginForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const payload = {
-      username: dom.loginUsername.value,
-      password: dom.loginPassword.value,
-    };
-
-    const result = await window.desktopApi.login(payload);
-    if (!result.ok || !result.data) {
-      setStatus(`Giriş başarısız: ${getErrorMessage(result.error)}`, true);
-      return;
-    }
-
-    authController.renderSession(result.data);
-    selfUserId = result.data.user?.id ?? null;
+  const handleAuthenticatedSession = async (): Promise<void> => {
     directoryController.startFriendsPresenceAutoRefresh();
     await ensureBackgroundRealtimeConnection();
     await loadProfileFromBackend();
-    workspaceController.setWorkspacePage("lobby");
-    setStatus(
-      "Giriş başarılı. Sohbete bağlanmak için bağlan butonunu kullan.",
-      false,
-    );
     await directoryController.refreshRegisteredUsers(true);
     await refreshLobby();
-  });
+  };
 
-  dom.registerForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const payload = {
-      username: dom.registerUsername.value,
-      password: dom.registerPassword.value,
-    };
-
-    const result = await window.desktopApi.register(payload);
-    if (!result.ok || !result.data) {
-      if (result.error?.code === "INVALID_INVITE_CODE") {
-        setStatus(
-          "Kayıt için davet kodu gerekmiyor. Backend sürecini yeniden başlatıp tekrar deneyin.",
-          true,
-        );
-        return;
+  bindAuthAndProfileForms({
+    dom,
+    desktopApi,
+    setStatus,
+    getErrorMessage,
+    renderSession: authController.renderSession,
+    setSelfUserId: (userId) => {
+      selfUserId = userId;
+    },
+    onSessionAuthenticated: async () => {
+      workspaceController.setWorkspacePage("lobby");
+      await handleAuthenticatedSession();
+    },
+    onProfileDisplayNameUpdated: async (displayName) => {
+      if (selfUserId) {
+        applyLocalDisplayName(selfUserId, displayName);
+        directoryController.renderUserDirectory();
+        await voiceController.onLobbyUpdated();
       }
 
-      setStatus(`Kayıt başarısız: ${getErrorMessage(result.error)}`, true);
-      return;
-    }
-
-    authController.renderSession(result.data);
-    selfUserId = result.data.user?.id ?? null;
-    directoryController.startFriendsPresenceAutoRefresh();
-    await ensureBackgroundRealtimeConnection();
-    await loadProfileFromBackend();
-    workspaceController.setWorkspacePage("lobby");
-    setStatus(
-      "Kayıt ve giriş başarılı. Sohbete bağlanmak için bağlan butonunu kullan.",
-      false,
-    );
-    await directoryController.refreshRegisteredUsers(true);
-    await refreshLobby();
-  });
-
-  dom.profileForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const displayName = dom.profileDisplayName.value.trim();
-    const email = dom.profileEmail.value.trim();
-    const bio = dom.profileBio.value.trim();
-
-    if (displayName.length < 3) {
-      setStatus("Görünen ad en az 3 karakter olmalı", true);
-      return;
-    }
-
-    const result = await window.desktopApi.updateProfile({
-      displayName,
-      email: email.length > 0 ? email : null,
-      bio: bio.length > 0 ? bio : null,
-    });
-
-    if (!result.ok || !result.data) {
-      setStatus(
-        `Profil güncellenemedi: ${getErrorMessage(result.error)}`,
-        true,
-      );
-      return;
-    }
-
-    dom.currentUser.textContent = result.data.profile.displayName;
-    if (selfUserId) {
-      applyLocalDisplayName(selfUserId, result.data.profile.displayName);
-      directoryController.renderUserDirectory();
-      void voiceController.onLobbyUpdated();
-    }
-    await directoryController.refreshRegisteredUsers(true);
-    setStatus("Profil bilgileri güncellendi", false);
-  });
-
-  dom.passwordForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const currentPassword = dom.currentPassword.value;
-    const newPassword = dom.newPassword.value;
-    const confirmPassword = dom.confirmPassword.value;
-
-    if (newPassword !== confirmPassword) {
-      setStatus("Yeni şifre alanları birbiriyle uyuşmuyor", true);
-      return;
-    }
-
-    const result = await window.desktopApi.changePassword({
-      currentPassword,
-      newPassword,
-    });
-
-    if (!result.ok || !result.data) {
-      setStatus(
-        `Şifre değişikliği başarısız: ${getErrorMessage(result.error)}`,
-        true,
-      );
-      return;
-    }
-
-    dom.passwordForm.reset();
-    setStatus("Şifre başarıyla güncellendi", false);
-  });
-
-  dom.microphoneSelect.addEventListener("change", async () => {
-    try {
-      await voiceController.handleMicrophoneChange(dom.microphoneSelect.value);
-    } catch {
-      setStatus("Mikrofon değiştirilemedi", true);
-    }
-  });
-
-  dom.micTestToggle.addEventListener("click", async () => {
-    try {
-      const isTesting = await voiceController.toggleMicTest();
-      dom.micTestToggle.textContent = isTesting
-        ? "Ses Testini Durdur"
-        : "Ses Testini Başlat";
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "bilinmeyen hata";
-      setStatus(`Ses testi başlatılamadı: ${message}`, true);
-    }
-  });
-
-  dom.outputVolume.addEventListener("input", () => {
-    const value = Number(dom.outputVolume.value || "100");
-    voiceController.setOutputVolume(value);
-    updateOutputVolumeText(value);
-  });
-
-  dom.inputGain.addEventListener("input", () => {
-    inputGainPercent = clampInputGainPercent(
-      Number(dom.inputGain.value || "100"),
-    );
-    updateInputGainText(inputGainPercent);
-  });
-
-  dom.inputGain.addEventListener("change", () => {
-    inputGainPercent = clampInputGainPercent(
-      Number(dom.inputGain.value || "100"),
-    );
-    updateInputGainText(inputGainPercent);
-    persistInputGainPreference();
-    void voiceController
-      .setInputGain(inputGainPercent)
-      .then(() => {
-        setStatus(
-          `Mikrofon ses kazancı %${inputGainPercent} olarak ayarlandı`,
-          false,
-        );
-      })
-      .catch((error) => {
-        const message =
-          error instanceof Error ? error.message : "bilinmeyen hata";
-        setStatus(`Mikrofon ses kazancı ayarlanamadı: ${message}`, true);
-      });
-  });
-
-  dom.speakingThresholdMode.addEventListener("change", () => {
-    speakingDetectionMode = normalizeDetectionMode(
-      dom.speakingThresholdMode.value,
-    );
-    voiceController.setSpeakingDetectionMode(speakingDetectionMode);
-    updateSpeakingThresholdUi();
-    persistSpeakingDetectionPreference();
-    setStatus(
-      speakingDetectionMode === "auto"
-        ? "Ses algılama otomatik moda alındı"
-        : "Ses algılama manuel moda alındı",
-      false,
-    );
-  });
-
-  dom.speakingThreshold.addEventListener("input", () => {
-    manualSpeakingThresholdPercent = clampThresholdPercent(
-      Number(
-        dom.speakingThreshold.value || `${DEFAULT_SPEAKING_THRESHOLD_PERCENT}`,
-      ),
-    );
-    voiceController.setManualSpeakingThreshold(manualSpeakingThresholdPercent);
-    updateSpeakingThresholdUi();
-    persistSpeakingDetectionPreference();
-  });
-
-  dom.speakingThreshold.addEventListener("change", () => {
-    setStatus(
-      `Manuel konuşma eşiği %${manualSpeakingThresholdPercent} olarak ayarlandı`,
-      false,
-    );
-  });
-
-  dom.logoutButton.addEventListener("click", async () => {
-    await window.desktopApi.lobbyLeave();
-    const result = await window.desktopApi.logout();
-    if (!result.ok || !result.data) {
-      setStatus(`Çıkış başarısız: ${getErrorMessage(result.error)}`, true);
-      return;
-    }
-
-    voiceController.cleanupForLobbyExit();
-    resetRemoteMediaAnnouncementState();
-    stopAllShareTests();
-    voiceConnected = false;
-    cameraSharing = false;
-    screenSharing = false;
-    updateQuickConnectionButton();
-    updateCameraShareButton();
-    updateScreenShareButton();
-    directoryController.stopFriendsPresenceAutoRefresh();
-    authController.renderSession(result.data);
-    selfUserId = null;
-    displayNameByUserId.clear();
-    lobbyController.setDisplayNameMap(displayNameByUserId);
-    directoryController.clearUsers();
-    closeParticipantAudioMenu();
-    directoryController.renderUserDirectory();
-    workspaceController.setWorkspacePage("lobby");
-    setStatus("Çıkış yapıldı", false);
-    setConnectionState("Giriş gerekli", "warn");
-  });
-
-  const appVersion = await desktopApi.getAppVersion();
-  dom.version.textContent = appVersion;
-  await updaterController.initialize();
-
-  const unsubscribeUpdateEvents = desktopApi.onUpdateEvent((state) => {
-    updaterController.renderDesktopUpdateState(state);
-
-    if (state.status === "available") {
-      const versionSuffix = state.availableVersion
-        ? ` (v${state.availableVersion})`
-        : "";
-      setStatus(`Yeni sürüm bulundu${versionSuffix}.`, false);
-      return;
-    }
-
-    if (state.status === "downloaded") {
-      setStatus(
-        "Yeni sürüm indirildi, uygulama otomatik yeniden başlatılıyor...",
-        false,
-      );
-    }
-  });
-
-  const sessionResult = await desktopApi.getSession();
-  if (!sessionResult.ok || !sessionResult.data) {
-    authController.renderSession({ authenticated: false, user: null });
-    setStatus(
-      `Oturum bilgisi alınamadı: ${getErrorMessage(sessionResult.error)}`,
-      true,
-    );
-  } else {
-    authController.renderSession(sessionResult.data);
-    selfUserId = sessionResult.data.user?.id ?? null;
-    if (sessionResult.data.authenticated) {
-      directoryController.startFriendsPresenceAutoRefresh();
-      await ensureBackgroundRealtimeConnection();
-      await loadProfileFromBackend();
       await directoryController.refreshRegisteredUsers(true);
-      setStatus(
-        "Oturum hazır. Sohbete bağlanmak için bağlan butonunu kullan.",
-        false,
-      );
-      await refreshLobby();
-    } else {
+    },
+  });
+
+  bindLogoutControl({
+    dom,
+    desktopApi,
+    setStatus,
+    getErrorMessage,
+    onLogoutSuccess: async (session: SessionSnapshot) => {
+      voiceController.cleanupForLobbyExit();
+      resetRemoteMediaAnnouncementState();
+      stopAllShareTests();
+      voiceConnected = false;
+      cameraSharing = false;
+      screenSharing = false;
+      updateQuickConnectionButton();
+      updateCameraShareButton();
+      updateScreenShareButton();
       directoryController.stopFriendsPresenceAutoRefresh();
-    }
-  }
+      authController.renderSession(session);
+      selfUserId = null;
+      displayNameByUserId.clear();
+      lobbyController.setDisplayNameMap(displayNameByUserId);
+      directoryController.clearUsers();
+      closeParticipantAudioMenu();
+      directoryController.renderUserDirectory();
+      workspaceController.setWorkspacePage("lobby");
+      setConnectionState("Giriş gerekli", "warn");
+    },
+  });
+
+  await initializeUpdaterAndSession({
+    dom,
+    desktopApi,
+    updaterController,
+    setStatus,
+    getErrorMessage,
+    renderSession: authController.renderSession,
+    setSelfUserId: (userId) => {
+      selfUserId = userId;
+    },
+    onAuthenticatedSession: handleAuthenticatedSession,
+    onUnauthenticatedSession: () => {
+      directoryController.stopFriendsPresenceAutoRefresh();
+    },
+    addCleanup: (cleanup) => {
+      lifecycle.add(cleanup);
+    },
+  });
 
   const mediaDevicesForEvents = navigator.mediaDevices;
   if (
     mediaDevicesForEvents &&
     typeof mediaDevicesForEvents.addEventListener === "function"
   ) {
-    mediaDevicesForEvents.addEventListener("devicechange", () => {
+    const handleDeviceChange = () => {
       void voiceController.listMicrophones();
-    });
+    };
+    lifecycle.on(mediaDevicesForEvents, "devicechange", handleDeviceChange);
   }
 
-  window.addEventListener("beforeunload", () => {
-    directoryController.stopFriendsPresenceAutoRefresh();
-    stopAllShareTests();
-    unsubscribeWindowState();
-    unsubscribeUpdateEvents();
-    voiceController.destroy();
-    unsubscribeRealtime();
+  lifecycle.on(window, "beforeunload", () => {
+    lifecycle.dispose();
   });
 
   authController.setAuthPage("login");
-
-  workspaceController.setSettingsTab(activeSettingsTab);
   diagnosticsController.initialize();
   applyShareSettingsUi();
   appendMediaDebugLog({
@@ -2898,7 +2039,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     event: "session-start",
     message: "Medya tanılama oturumu başlatıldı",
     details: {
-      gpuAccelerationEnabled,
       cameraResolution,
       cameraFps,
       screenResolution,
@@ -2907,7 +2047,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     },
   });
   renderMediaDebugLogOutput();
-  setScreenModalOpen(false);
+  shareModalController.closeScreenModal();
   dom.inputGain.value = `${inputGainPercent}`;
   voiceController.setOutputVolume(Number(dom.outputVolume.value || "100"));
   voiceController.setOutputMuted(isHeadphoneMuted);
@@ -2924,7 +2064,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   updateScreenShareButton();
   updateUiSoundsToggle();
   updateRnnoiseToggle();
-  updateDesktopPreferenceToggles();
   diagnosticsController.updateConnectionDiagnostics();
   void voiceController.listMicrophones();
   updateMuteButton();

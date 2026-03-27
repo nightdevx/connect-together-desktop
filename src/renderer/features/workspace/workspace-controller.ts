@@ -87,29 +87,28 @@ export const createWorkspaceController = (
     }
   };
 
+  const syncSwitchButton = (
+    button: HTMLButtonElement,
+    enabled: boolean,
+  ): void => {
+    button.classList.toggle("enabled", enabled);
+    button.setAttribute("aria-checked", enabled ? "true" : "false");
+    button.dataset.stateLabel = enabled ? "Açık" : "Kapalı";
+  };
+
   const applyWindowState = (isMaximized: boolean): void => {
-    document.body.classList.toggle("window-maximized", isMaximized);
-    dom.windowMaximize.title = isMaximized ? "Geri Yükle" : "Büyüt";
+    dom.windowMaximize.classList.toggle("is-maximized", isMaximized);
+    dom.windowMaximize.title = isMaximized ? "Küçült" : "Büyüt";
     dom.windowMaximize.setAttribute(
       "aria-label",
-      isMaximized ? "Geri Yükle" : "Büyüt",
+      isMaximized ? "Küçült" : "Büyüt",
     );
   };
 
   const updateDesktopPreferenceToggles = (): void => {
-    dom.closeToTrayToggle.classList.toggle("enabled", closeToTrayOnClose);
-    dom.closeToTrayToggle.textContent = closeToTrayOnClose ? "Açık" : "Kapalı";
-
-    dom.launchAtStartupToggle.classList.toggle("enabled", launchAtStartup);
-    dom.launchAtStartupToggle.textContent = launchAtStartup ? "Açık" : "Kapalı";
-
-    dom.gpuAccelerationToggle.classList.toggle(
-      "enabled",
-      gpuAccelerationEnabled,
-    );
-    dom.gpuAccelerationToggle.textContent = gpuAccelerationEnabled
-      ? "Açık"
-      : "Kapalı";
+    syncSwitchButton(dom.closeToTrayToggle, closeToTrayOnClose);
+    syncSwitchButton(dom.launchAtStartupToggle, launchAtStartup);
+    syncSwitchButton(dom.gpuAccelerationToggle, gpuAccelerationEnabled);
   };
 
   const bindEvents = (): void => {
@@ -188,8 +187,8 @@ export const createWorkspaceController = (
         updateDesktopPreferenceToggles();
         setStatus(
           gpuAccelerationEnabled
-            ? "GPU hizlandirma acildi. Degisiklik icin uygulamayi yeniden baslatin"
-            : "GPU hizlandirma kapatildi. Degisiklik icin uygulamayi yeniden baslatin",
+            ? "GPU hizlandirma acildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin."
+            : "GPU hizlandirma kapatildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin.",
           false,
         );
       } catch {
@@ -267,6 +266,7 @@ export const createWorkspaceController = (
   const cleanup = (): void => {
     if (unsubscribeWindowState) {
       unsubscribeWindowState();
+      unsubscribeWindowState = null;
     }
   };
 

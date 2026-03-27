@@ -1,7 +1,9 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
-import fs from "node:fs";
-import path from "node:path";
+import { app, nativeImage } from "electron";
 import { createDesktopAppUpdater } from "./app-updater";
+import {
+  resolveLogoAssetPath,
+  resolvePreferredLogoAssetPath,
+} from "./asset-resolver";
 import { BackendClient } from "./backend-client";
 import {
   backendBaseUrl,
@@ -13,13 +15,9 @@ import { DesktopPreferencesStore } from "./desktop-preferences-store";
 import { registerDesktopIpcHandlers } from "./ipc/register-desktop-ipc";
 import { RealtimeClient } from "./realtime-client";
 import { SessionStore } from "./session-store";
-import type { DesktopUpdateState } from "./types";
-import { createMainWindow } from "./window/create-main-window";
-import { createUpdateInstallWindow } from "./window/create-update-install-window";
+import { createTrayManager } from "./tray-manager";
+import { createWindowManager } from "./window-manager";
 
-let mainWindow: BrowserWindow | null = null;
-let updateInstallWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
 let isQuitting = false;
 const desktopPreferencesStore = new DesktopPreferencesStore();
 const APP_USER_MODEL_ID = "com.nightdijital.connecttogether.desktop";
@@ -60,29 +58,23 @@ const backendClient = new BackendClient(backendBaseUrl);
 const realtimeClient = new RealtimeClient(backendBaseUrl);
 const sessionStore = new SessionStore();
 
-const showUpdateInstallWindow = (): void => {
-  if (updateInstallWindow && !updateInstallWindow.isDestroyed()) {
-    updateInstallWindow.show();
-    updateInstallWindow.focus();
-    return;
-  }
-
-  updateInstallWindow = createUpdateInstallWindow();
-  updateInstallWindow.on("closed", () => {
-    updateInstallWindow = null;
-  });
-};
+let trayManager: ReturnType<typeof createTrayManager>;
+const windowManager = createWindowManager({
+  shouldHideMainWindowOnClose: () => {
+    const prefs = desktopPreferencesStore.get();
+    return !isQuitting && prefs.closeToTrayOnClose;
+  },
+  onHideToTrayRequested: () => {
+    trayManager.ensureTray();
+  },
+});
 
 const appUpdater = createDesktopAppUpdater({
   onBeforeQuitAndInstall: () => {
     isQuitting = true;
-    destroyTray();
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.hide();
-    }
-
-    showUpdateInstallWindow();
+    trayManager.destroyTray();
+    windowManager.hideMainWindow();
+    windowManager.showUpdateInstallWindow();
   },
 });
 
@@ -90,39 +82,8 @@ const applyLaunchAtStartup = (enabled: boolean): void => {
   app.setLoginItemSettings({ openAtLogin: enabled });
 };
 
-const resolveLogoAssetPath = (fileName: "logo.png" | "logo.ico"): string => {
-  const fallbackPath = path.join(process.cwd(), "public", "images", fileName);
-  const candidates = [
-    fallbackPath,
-    path.join(process.cwd(), "dist", "renderer", "images", fileName),
-    path.join(__dirname, "../renderer/images", fileName),
-    path.join(app.getAppPath(), "public", "images", fileName),
-    path.join(app.getAppPath(), "dist", "renderer", "images", fileName),
-  ];
-
-  for (const candidatePath of candidates) {
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return fallbackPath;
-};
-
 const resolveTrayLogoPath = (): string => {
-  const preferredFiles: Array<"logo.png" | "logo.ico"> = [
-    "logo.png",
-    "logo.ico",
-  ];
-
-  for (const fileName of preferredFiles) {
-    const candidatePath = resolveLogoAssetPath(fileName);
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return resolveLogoAssetPath("logo.png");
+  return resolvePreferredLogoAssetPath(["logo.png", "logo.ico"], "logo.png");
 };
 
 const createTrayIcon = () => {
@@ -134,92 +95,19 @@ const createTrayIcon = () => {
   return image.resize({ width: 16, height: 16 });
 };
 
-const showMainWindow = async (): Promise<void> => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    mainWindow = await createMainWindow();
-    bindCloseToTrayBehavior(mainWindow);
-    mainWindow.on("closed", () => {
-      mainWindow = null;
-    });
-    return;
-  }
-
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-  mainWindow.show();
-  mainWindow.focus();
-};
-
-const ensureTray = (): void => {
-  if (tray) {
-    return;
-  }
-
-  tray = new Tray(createTrayIcon());
-  tray.setToolTip("Connect Together Desktop");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: "Uygulamayi Ac",
-        click: () => {
-          void showMainWindow();
-        },
-      },
-      {
-        label: "Cikis",
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
-      },
-    ]),
-  );
-  tray.on("double-click", () => {
-    void showMainWindow();
-  });
-};
-
-const destroyTray = (): void => {
-  if (!tray) {
-    return;
-  }
-
-  tray.destroy();
-  tray = null;
-};
-
-const bindCloseToTrayBehavior = (win: BrowserWindow): void => {
-  win.on("close", (event) => {
-    const prefs = desktopPreferencesStore.get();
-    if (isQuitting || !prefs.closeToTrayOnClose) {
-      return;
-    }
-
-    event.preventDefault();
-    ensureTray();
-    win.hide();
-  });
-};
-
-const emitRealtimeEvent = (payload: unknown): void => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  mainWindow.webContents.send("desktop:realtime-event", payload);
-};
-
-const emitUpdateEvent = (payload: DesktopUpdateState): void => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  mainWindow.webContents.send("desktop:update-event", payload);
-};
+trayManager = createTrayManager({
+  createTrayIcon,
+  onOpenMainWindow: () => {
+    void windowManager.showMainWindow();
+  },
+  onQuitRequested: () => {
+    isQuitting = true;
+    app.quit();
+  },
+});
 
 appUpdater.onStateChanged((state) => {
-  emitUpdateEvent(state);
+  windowManager.emitUpdateEvent(state);
 });
 
 registerDesktopIpcHandlers({
@@ -238,15 +126,11 @@ registerDesktopIpcHandlers({
     const next = desktopPreferencesStore.update(patch);
     applyLaunchAtStartup(next.launchAtStartup);
     if (!next.closeToTrayOnClose) {
-      destroyTray();
+      trayManager.destroyTray();
     }
 
-    if (
-      previous.gpuAccelerationEnabled !== next.gpuAccelerationEnabled &&
-      mainWindow &&
-      !mainWindow.isDestroyed()
-    ) {
-      emitRealtimeEvent({
+    if (previous.gpuAccelerationEnabled !== next.gpuAccelerationEnabled) {
+      windowManager.emitRealtimeEvent({
         type: "system-error",
         code: "GPU_ACCELERATION_RESTART_REQUIRED",
         message:
@@ -259,31 +143,17 @@ registerDesktopIpcHandlers({
   getUpdateState: () => appUpdater.getState(),
   checkForUpdates: () => appUpdater.checkForUpdates(),
   applyUpdate: () => appUpdater.applyUpdate(),
-  emitRealtimeEvent,
-  emitUpdateEvent,
+  emitRealtimeEvent: windowManager.emitRealtimeEvent,
+  emitUpdateEvent: windowManager.emitUpdateEvent,
 });
-
-const ensureMainWindow = async (): Promise<void> => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.focus();
-    return;
-  }
-
-  mainWindow = await createMainWindow();
-  bindCloseToTrayBehavior(mainWindow);
-
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-};
 
 app.whenReady().then(async () => {
   applyLaunchAtStartup(desktopPreferencesStore.get().launchAtStartup);
-  await ensureMainWindow();
+  await windowManager.ensureMainWindow();
   appUpdater.startBackgroundChecks();
 
   app.on("activate", async () => {
-    await ensureMainWindow();
+    await windowManager.ensureMainWindow();
     void appUpdater.checkForUpdates();
   });
 });
@@ -308,7 +178,7 @@ app.on("child-process-gone", (_event, details) => {
   ) {
     desktopPreferencesStore.update({ gpuAccelerationEnabled: false });
 
-    emitRealtimeEvent({
+    windowManager.emitRealtimeEvent({
       type: "system-error",
       code: "GPU_ACCELERATION_FALLBACK",
       message:

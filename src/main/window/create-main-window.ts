@@ -1,28 +1,9 @@
 import { app, BrowserWindow } from "electron";
-import fs from "node:fs";
 import path from "node:path";
+import { resolvePreferredLogoAssetPath } from "../asset-resolver";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
-
-const resolveLogoAssetPath = (fileName: "logo.png" | "logo.ico"): string => {
-  const fallbackPath = path.join(process.cwd(), "public", "images", fileName);
-  const candidates = [
-    fallbackPath,
-    path.join(process.cwd(), "dist", "renderer", "images", fileName),
-    path.join(__dirname, "../../renderer/images", fileName),
-    path.join(app.getAppPath(), "public", "images", fileName),
-    path.join(app.getAppPath(), "dist", "renderer", "images", fileName),
-  ];
-
-  for (const candidatePath of candidates) {
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return fallbackPath;
-};
 
 const resolveWindowIconPath = (): string => {
   const fallbackFile: "logo.png" | "logo.ico" =
@@ -32,14 +13,7 @@ const resolveWindowIconPath = (): string => {
       ? ["logo.ico", "logo.png"]
       : ["logo.png", "logo.ico"];
 
-  for (const fileName of preferredFiles) {
-    const candidatePath = resolveLogoAssetPath(fileName);
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return resolveLogoAssetPath(fallbackFile);
+  return resolvePreferredLogoAssetPath(preferredFiles, fallbackFile);
 };
 
 const loadFallbackContent = async (win: BrowserWindow): Promise<void> => {
@@ -134,8 +108,8 @@ export const createMainWindow = async (): Promise<BrowserWindow> => {
       preload: path.join(__dirname, "../preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
-      devTools: true,
+      sandbox: true,
+      devTools: !app.isPackaged,
     },
     title: "Connect Together Desktop",
     backgroundColor: "#0f1118",

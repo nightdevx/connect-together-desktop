@@ -10,18 +10,18 @@ export const registerAuthIpcHandlers = (
   helpers: DesktopIpcModuleHelpers,
 ): void => {
   const parseLoginPayload = (payload: unknown): LoginRequest => {
-    const source = payload as Partial<LoginRequest>;
+    const source = helpers.ensureObject(payload, "login payload");
     return {
-      username: helpers.ensureValidString(source.username, "username", 3),
-      password: helpers.ensureValidString(source.password, "password", 8),
+      username: helpers.ensureValidString(source.username, "username", 3, 64),
+      password: helpers.ensureValidString(source.password, "password", 8, 256),
     };
   };
 
   const parseRegisterPayload = (payload: unknown): RegisterRequest => {
-    const source = payload as Partial<RegisterRequest>;
+    const source = helpers.ensureObject(payload, "register payload");
     return {
-      username: helpers.ensureValidString(source.username, "username", 3),
-      password: helpers.ensureValidString(source.password, "password", 8),
+      username: helpers.ensureValidString(source.username, "username", 3, 64),
+      password: helpers.ensureValidString(source.password, "password", 8, 256),
     };
   };
 
@@ -31,6 +31,7 @@ export const registerAuthIpcHandlers = (
       source.displayName,
       "displayName",
       3,
+      80,
     );
 
     const emailRaw =
@@ -54,11 +55,13 @@ export const registerAuthIpcHandlers = (
         source.currentPassword,
         "currentPassword",
         8,
+        256,
       ),
       newPassword: helpers.ensureValidString(
         source.newPassword,
         "newPassword",
         8,
+        256,
       ),
     };
   };

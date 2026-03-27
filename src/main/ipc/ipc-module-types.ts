@@ -38,6 +38,7 @@ export interface DesktopIpcModuleHelpers {
     value: unknown,
     field: string,
     minLength: number,
+    maxLength?: number,
   ) => string;
   ensureObject: (value: unknown, field: string) => Record<string, unknown>;
   persistAuthResult: (result: {

@@ -1,6 +1,7 @@
 import type { RtcSignalPayload } from "../../shared/contracts";
 import { ipcMain } from "electron";
 import { DesktopApiError, type LobbyStateResponse } from "../backend-client";
+import { IPC_ERROR_CODES } from "./ipc-error-codes";
 import type {
   DesktopIpcModuleHelpers,
   RegisterDesktopIpcHandlersDeps,
@@ -14,10 +15,17 @@ export const registerLobbyIpcHandlers = (
     payload: unknown,
     fromUserId: string,
   ): RtcSignalPayload => {
-    const source = payload as Partial<RtcSignalPayload>;
-    if (typeof source.toUserId !== "string" || source.toUserId.length < 8) {
+    const source = helpers.ensureObject(payload, "rtc signal payload");
+    const toUserId = helpers.ensureValidString(
+      source.toUserId,
+      "toUserId",
+      8,
+      128,
+    );
+
+    if (toUserId.length < 8) {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         "toUserId is required",
       );
@@ -29,7 +37,7 @@ export const registerLobbyIpcHandlers = (
       source.type !== "ice-candidate"
     ) {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         "rtc signal type is invalid",
       );
@@ -37,7 +45,7 @@ export const registerLobbyIpcHandlers = (
 
     if (source.data === undefined) {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         "rtc signal data is required",
       );
@@ -45,7 +53,7 @@ export const registerLobbyIpcHandlers = (
 
     return {
       fromUserId,
-      toUserId: source.toUserId,
+      toUserId,
       type: source.type,
       data: source.data,
     };
@@ -96,7 +104,7 @@ export const registerLobbyIpcHandlers = (
     try {
       if (typeof muted !== "boolean") {
         throw new DesktopApiError(
-          "VALIDATION_ERROR",
+          IPC_ERROR_CODES.VALIDATION_ERROR,
           400,
           "muted must be a boolean",
         );
@@ -105,10 +113,6 @@ export const registerLobbyIpcHandlers = (
       const result = await helpers.withAccessToken(async (accessToken) => {
         return deps.backendClient.setLobbyMute(accessToken, muted);
       });
-
-      if (deps.realtimeClient.isConnectedOrConnecting()) {
-        deps.realtimeClient.setMute(muted);
-      }
 
       return helpers.ok({ accepted: result.accepted === true });
     } catch (error) {
@@ -120,7 +124,7 @@ export const registerLobbyIpcHandlers = (
     try {
       if (typeof deafened !== "boolean") {
         throw new DesktopApiError(
-          "VALIDATION_ERROR",
+          IPC_ERROR_CODES.VALIDATION_ERROR,
           400,
           "deafened must be a boolean",
         );
@@ -129,10 +133,6 @@ export const registerLobbyIpcHandlers = (
       const result = await helpers.withAccessToken(async (accessToken) => {
         return deps.backendClient.setLobbyDeafen(accessToken, deafened);
       });
-
-      if (deps.realtimeClient.isConnectedOrConnecting()) {
-        deps.realtimeClient.setDeafened(deafened);
-      }
 
       return helpers.ok({ accepted: result.accepted === true });
     } catch (error) {
@@ -146,7 +146,7 @@ export const registerLobbyIpcHandlers = (
       try {
         if (typeof speaking !== "boolean") {
           throw new DesktopApiError(
-            "VALIDATION_ERROR",
+            IPC_ERROR_CODES.VALIDATION_ERROR,
             400,
             "speaking must be a boolean",
           );
@@ -155,10 +155,6 @@ export const registerLobbyIpcHandlers = (
         const result = await helpers.withAccessToken(async (accessToken) => {
           return deps.backendClient.setLobbySpeaking(accessToken, speaking);
         });
-
-        if (deps.realtimeClient.isConnectedOrConnecting()) {
-          deps.realtimeClient.setSpeaking(speaking);
-        }
 
         return helpers.ok({ accepted: result.accepted === true });
       } catch (error) {
@@ -171,12 +167,15 @@ export const registerLobbyIpcHandlers = (
     try {
       const session = deps.sessionStore.get();
       if (!session) {
-        throw new DesktopApiError("UNAUTHORIZED", 401, "No active session");
+        throw new DesktopApiError(
+          IPC_ERROR_CODES.UNAUTHORIZED,
+          401,
+          "No active session",
+        );
       }
 
       helpers.ensureRealtimeConnected();
-      const safePayload = parseOutgoingRtcSignal(payload, session.user.id);
-      deps.realtimeClient.sendSignal(safePayload);
+      parseOutgoingRtcSignal(payload, session.user.id);
       return helpers.ok({ accepted: true });
     } catch (error) {
       return helpers.fail(error);

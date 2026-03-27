@@ -1,25 +1,8 @@
-import { app, BrowserWindow } from "electron";
-import fs from "node:fs";
-import path from "node:path";
-
-const resolveLogoAssetPath = (fileName: "logo.png" | "logo.ico"): string => {
-  const fallbackPath = path.join(process.cwd(), "public", "images", fileName);
-  const candidates = [
-    fallbackPath,
-    path.join(process.cwd(), "dist", "renderer", "images", fileName),
-    path.join(__dirname, "../../renderer/images", fileName),
-    path.join(app.getAppPath(), "public", "images", fileName),
-    path.join(app.getAppPath(), "dist", "renderer", "images", fileName),
-  ];
-
-  for (const candidatePath of candidates) {
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return fallbackPath;
-};
+import { BrowserWindow } from "electron";
+import {
+  resolveLogoDataUrl,
+  resolvePreferredLogoAssetPath,
+} from "../asset-resolver";
 
 const resolveUpdateWindowIconPath = (): string => {
   const fallbackFile: "logo.png" | "logo.ico" =
@@ -29,38 +12,7 @@ const resolveUpdateWindowIconPath = (): string => {
       ? ["logo.ico", "logo.png"]
       : ["logo.png", "logo.ico"];
 
-  for (const fileName of preferredFiles) {
-    const candidatePath = resolveLogoAssetPath(fileName);
-    if (fs.existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return resolveLogoAssetPath(fallbackFile);
-};
-
-const resolveLogoDataUrl = (): string | null => {
-  const preferredFiles: Array<"logo.png" | "logo.ico"> = [
-    "logo.png",
-    "logo.ico",
-  ];
-
-  for (const fileName of preferredFiles) {
-    const logoPath = resolveLogoAssetPath(fileName);
-    if (!fs.existsSync(logoPath)) {
-      continue;
-    }
-
-    try {
-      const encoded = fs.readFileSync(logoPath).toString("base64");
-      const mimeType = fileName === "logo.png" ? "image/png" : "image/x-icon";
-      return `data:${mimeType};base64,${encoded}`;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
+  return resolvePreferredLogoAssetPath(preferredFiles, fallbackFile);
 };
 
 const buildNeonLogoSvg = (): string => {

@@ -1,0 +1,8 @@
+export const IPC_ERROR_CODES = {
+  VALIDATION_ERROR: "VALIDATION_ERROR",
+  UNAUTHORIZED: "UNAUTHORIZED",
+  UNEXPECTED_ERROR: "UNEXPECTED_ERROR",
+} as const;
+
+export type IpcErrorCode =
+  (typeof IPC_ERROR_CODES)[keyof typeof IPC_ERROR_CODES];

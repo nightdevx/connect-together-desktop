@@ -3,6 +3,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { DesktopApiError } from "../backend-client";
 import type { DesktopPreferences } from "../types";
 import type { ApiErrorPayload, DesktopResult, SessionSnapshot } from "../types";
+import { IPC_ERROR_CODES } from "./ipc-error-codes";
 import type {
   DesktopIpcModuleHelpers,
   RegisterDesktopIpcHandlersDeps,
@@ -27,14 +28,14 @@ export const registerDesktopIpcHandlers = (
 
     if (error instanceof Error) {
       return {
-        code: "UNEXPECTED_ERROR",
+        code: IPC_ERROR_CODES.UNEXPECTED_ERROR,
         message: error.message,
         statusCode: 500,
       };
     }
 
     return {
-      code: "UNEXPECTED_ERROR",
+      code: IPC_ERROR_CODES.UNEXPECTED_ERROR,
       message: "Unexpected desktop error",
       statusCode: 500,
     };
@@ -66,10 +67,11 @@ export const registerDesktopIpcHandlers = (
     value: unknown,
     field: string,
     minLength: number,
+    maxLength = 512,
   ): string => {
     if (typeof value !== "string") {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         `${field} must be a string`,
       );
@@ -78,9 +80,17 @@ export const registerDesktopIpcHandlers = (
     const trimmed = value.trim();
     if (trimmed.length < minLength) {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         `${field} must be at least ${minLength} chars`,
+      );
+    }
+
+    if (trimmed.length > maxLength) {
+      throw new DesktopApiError(
+        IPC_ERROR_CODES.VALIDATION_ERROR,
+        400,
+        `${field} must be at most ${maxLength} chars`,
       );
     }
 
@@ -93,7 +103,7 @@ export const registerDesktopIpcHandlers = (
   ): Record<string, unknown> => {
     if (typeof value !== "object" || value === null) {
       throw new DesktopApiError(
-        "VALIDATION_ERROR",
+        IPC_ERROR_CODES.VALIDATION_ERROR,
         400,
         `${field} must be an object`,
       );
@@ -118,7 +128,11 @@ export const registerDesktopIpcHandlers = (
   ): Promise<T> => {
     const current = deps.sessionStore.get();
     if (!current) {
-      throw new DesktopApiError("UNAUTHORIZED", 401, "No active session");
+      throw new DesktopApiError(
+        IPC_ERROR_CODES.UNAUTHORIZED,
+        401,
+        "No active session",
+      );
     }
 
     try {
@@ -139,14 +153,22 @@ export const registerDesktopIpcHandlers = (
 
   const requireSession = (): void => {
     if (!deps.sessionStore.get()) {
-      throw new DesktopApiError("UNAUTHORIZED", 401, "No active session");
+      throw new DesktopApiError(
+        IPC_ERROR_CODES.UNAUTHORIZED,
+        401,
+        "No active session",
+      );
     }
   };
 
   const connectRealtimeForCurrentSession = (): void => {
     const current = deps.sessionStore.get();
     if (!current) {
-      throw new DesktopApiError("UNAUTHORIZED", 401, "No active session");
+      throw new DesktopApiError(
+        IPC_ERROR_CODES.UNAUTHORIZED,
+        401,
+        "No active session",
+      );
     }
 
     deps.realtimeClient.connect(current.accessToken, (event) => {

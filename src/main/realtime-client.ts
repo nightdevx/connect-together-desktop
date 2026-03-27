@@ -108,30 +108,6 @@ export class RealtimeClient {
     this.onEvent = null;
   }
 
-  public joinLobby(): void {
-    // Lobby membership is synchronized via backend REST and server-side LiveKit integration.
-  }
-
-  public leaveLobby(): void {
-    // no-op
-  }
-
-  public setMute(muted: boolean): void {
-    void muted;
-  }
-
-  public setDeafened(deafened: boolean): void {
-    void deafened;
-  }
-
-  public setSpeaking(speaking: boolean): void {
-    void speaking;
-  }
-
-  public sendSignal(payload: RtcSignalPayload): void {
-    void payload;
-  }
-
   public isConnected(): boolean {
     return this.connected;
   }

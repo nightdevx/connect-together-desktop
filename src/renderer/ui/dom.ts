@@ -146,7 +146,7 @@ const requireElement = <T extends Element>(id: string): T => {
     throw new Error(`Missing required element: ${id}`);
   }
 
-  return element as T;
+  return element as unknown as T;
 };
 
 export const queryDomRefs = (): DomRefs => {
