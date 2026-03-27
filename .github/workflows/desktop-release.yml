@@ -12,6 +12,8 @@ permissions:
 jobs:
   release-windows:
     runs-on: windows-latest
+    environment:
+      name: ${{ vars.DESKTOP_RELEASE_ENVIRONMENT || 'production' }}
     defaults:
       run:
         shell: pwsh
@@ -60,6 +62,31 @@ jobs:
       - name: Install desktop dependencies
         if: steps.release_check.outputs.exists != 'true'
         run: npm ci
+
+      - name: Create .env from GitHub Secrets
+        if: steps.release_check.outputs.exists != 'true'
+        env:
+          CT_BACKEND_URL: ${{ secrets.CT_BACKEND_URL }}
+          CT_LIVEKIT_ROOM: ${{ secrets.CT_LIVEKIT_ROOM }}
+          CT_ICE_URLS: ${{ secrets.CT_ICE_URLS }}
+          CT_ICE_USERNAME: ${{ secrets.CT_ICE_USERNAME }}
+          CT_ICE_CREDENTIAL: ${{ secrets.CT_ICE_CREDENTIAL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CT_BACKEND_URL)) {
+            throw "Missing secret: CT_BACKEND_URL"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:CT_LIVEKIT_ROOM)) {
+            throw "Missing secret: CT_LIVEKIT_ROOM"
+          }
+
+          @(
+            "CT_BACKEND_URL=$($env:CT_BACKEND_URL)"
+            "CT_LIVEKIT_ROOM=$($env:CT_LIVEKIT_ROOM)"
+            "CT_ICE_URLS=$($env:CT_ICE_URLS)"
+            "CT_ICE_USERNAME=$($env:CT_ICE_USERNAME)"
+            "CT_ICE_CREDENTIAL=$($env:CT_ICE_CREDENTIAL)"
+          ) | Set-Content -Path .env -Encoding UTF8
 
       - name: Build desktop release artifacts
         if: steps.release_check.outputs.exists != 'true'
