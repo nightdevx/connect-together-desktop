@@ -55,8 +55,11 @@ export const registerLobbyIpcHandlers = (
     try {
       helpers.setAutoJoinLobbyEnabled(true);
       helpers.ensureRealtimeConnected();
+      const backendJoin = await helpers.withAccessToken(async (accessToken) => {
+        return deps.backendClient.joinLobby(accessToken);
+      });
       deps.realtimeClient.joinLobby();
-      return helpers.ok({ accepted: true });
+      return helpers.ok({ accepted: backendJoin.accepted === true });
     } catch (error) {
       helpers.setAutoJoinLobbyEnabled(false);
       return helpers.fail(error);
@@ -66,10 +69,28 @@ export const registerLobbyIpcHandlers = (
   ipcMain.handle("desktop:lobby-leave", async () => {
     try {
       helpers.setAutoJoinLobbyEnabled(false);
+      let backendAccepted = true;
+
+      try {
+        const backendLeave = await helpers.withAccessToken(
+          async (accessToken) => {
+            return deps.backendClient.leaveLobby(accessToken);
+          },
+        );
+        backendAccepted = backendLeave.accepted === true;
+      } catch (error) {
+        if (
+          !(error instanceof DesktopApiError) ||
+          (error.statusCode !== 401 && error.code !== "INVALID_REFRESH_TOKEN")
+        ) {
+          throw error;
+        }
+      }
+
       if (deps.realtimeClient.isConnected()) {
         deps.realtimeClient.leaveLobby();
       }
-      return helpers.ok({ accepted: true });
+      return helpers.ok({ accepted: backendAccepted });
     } catch (error) {
       return helpers.fail(error);
     }
@@ -85,9 +106,15 @@ export const registerLobbyIpcHandlers = (
         );
       }
 
-      helpers.ensureRealtimeConnected();
-      deps.realtimeClient.setMute(muted);
-      return helpers.ok({ accepted: true });
+      const result = await helpers.withAccessToken(async (accessToken) => {
+        return deps.backendClient.setLobbyMute(accessToken, muted);
+      });
+
+      if (deps.realtimeClient.isConnectedOrConnecting()) {
+        deps.realtimeClient.setMute(muted);
+      }
+
+      return helpers.ok({ accepted: result.accepted === true });
     } catch (error) {
       return helpers.fail(error);
     }
@@ -103,31 +130,46 @@ export const registerLobbyIpcHandlers = (
         );
       }
 
-      helpers.ensureRealtimeConnected();
-      deps.realtimeClient.setDeafened(deafened);
-      return helpers.ok({ accepted: true });
-    } catch (error) {
-      return helpers.fail(error);
-    }
-  });
+      const result = await helpers.withAccessToken(async (accessToken) => {
+        return deps.backendClient.setLobbyDeafen(accessToken, deafened);
+      });
 
-  ipcMain.handle("desktop:lobby-speaking", async (_event, speaking: unknown) => {
-    try {
-      if (typeof speaking !== "boolean") {
-        throw new DesktopApiError(
-          "VALIDATION_ERROR",
-          400,
-          "speaking must be a boolean",
-        );
+      if (deps.realtimeClient.isConnectedOrConnecting()) {
+        deps.realtimeClient.setDeafened(deafened);
       }
 
-      helpers.ensureRealtimeConnected();
-      deps.realtimeClient.setSpeaking(speaking);
-      return helpers.ok({ accepted: true });
+      return helpers.ok({ accepted: result.accepted === true });
     } catch (error) {
       return helpers.fail(error);
     }
   });
+
+  ipcMain.handle(
+    "desktop:lobby-speaking",
+    async (_event, speaking: unknown) => {
+      try {
+        if (typeof speaking !== "boolean") {
+          throw new DesktopApiError(
+            "VALIDATION_ERROR",
+            400,
+            "speaking must be a boolean",
+          );
+        }
+
+        const result = await helpers.withAccessToken(async (accessToken) => {
+          return deps.backendClient.setLobbySpeaking(accessToken, speaking);
+        });
+
+        if (deps.realtimeClient.isConnectedOrConnecting()) {
+          deps.realtimeClient.setSpeaking(speaking);
+        }
+
+        return helpers.ok({ accepted: result.accepted === true });
+      } catch (error) {
+        return helpers.fail(error);
+      }
+    },
+  );
 
   ipcMain.handle("desktop:rtc-signal", async (_event, payload: unknown) => {
     try {

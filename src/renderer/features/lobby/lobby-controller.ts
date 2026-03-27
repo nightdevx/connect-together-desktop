@@ -48,22 +48,62 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
     return name.charAt(0).toUpperCase();
   };
 
-  const createMediaPlaceholder = (): HTMLDivElement => {
+  const createMediaPlaceholder = (displayName: string): HTMLDivElement => {
     const placeholder = document.createElement("div");
     placeholder.className = "participant-media-placeholder";
 
-    const logo = document.createElement("img");
-    logo.className = "participant-media-placeholder-logo";
-    logo.src = "./images/logo.png";
-    logo.alt = "Connect Together";
+    const initials = document.createElement("span");
+    initials.className = "participant-media-placeholder-initial";
+    initials.textContent = getInitials(displayName);
 
     const text = document.createElement("span");
     text.className = "participant-media-placeholder-text";
     text.textContent = "Kamera veya ekran kapali";
 
-    placeholder.appendChild(logo);
+    placeholder.appendChild(initials);
     placeholder.appendChild(text);
     return placeholder;
+  };
+
+  const createStageCard = (
+    member: LobbyMemberSnapshot,
+    slotKey: string,
+    showPresence: boolean,
+  ): HTMLElement => {
+    const card = document.createElement("article");
+    card.className =
+      "participant-card participant-tile rounded-2xl border border-border bg-surface-2/30";
+    card.dataset.userId = member.userId;
+    if (member.speaking && !member.muted) {
+      card.classList.add("speaking");
+    }
+
+    const mediaSlot = document.createElement("div");
+    mediaSlot.className = "participant-media-slot";
+    mediaSlot.dataset.participantMediaSlot = slotKey;
+
+    const mediaPlaceholder = createMediaPlaceholder(member.username);
+    mediaSlot.appendChild(mediaPlaceholder);
+
+    const cardFooter = document.createElement("div");
+    cardFooter.className = "participant-card-footer";
+
+    const cardName = document.createElement("div");
+    cardName.className = "participant-card-name";
+    cardName.textContent = member.username;
+    cardFooter.appendChild(cardName);
+
+    if (showPresence) {
+      const cardBottom = document.createElement("div");
+      cardBottom.className = "participant-card-presence";
+      cardBottom.appendChild(createStatusIcon("mic", !member.muted));
+      cardBottom.appendChild(createStatusIcon("headphone", !member.deafened));
+      cardFooter.appendChild(cardBottom);
+    }
+
+    card.appendChild(mediaSlot);
+    card.appendChild(cardFooter);
+    return card;
   };
 
   const renderFromMap = (): void => {
@@ -114,40 +154,34 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
       li.appendChild(identity);
       dom.members.appendChild(li);
 
-      // Stage participant card
-      const card = document.createElement("article");
-      card.className =
-        "participant-card participant-tile rounded-2xl border border-border bg-surface-2/30";
-      card.dataset.userId = member.userId;
-      if (member.speaking && !member.muted) {
-        card.classList.add("speaking");
+      // Stage participant card(s)
+      if (member.cameraEnabled && member.screenSharing) {
+        dom.participantGrid.appendChild(
+          createStageCard(member, `${member.userId}:camera`, true),
+        );
+        dom.participantGrid.appendChild(
+          createStageCard(member, `${member.userId}:screen`, false),
+        );
+        continue;
       }
 
-      const mediaSlot = document.createElement("div");
-      mediaSlot.className = "participant-media-slot";
-      mediaSlot.dataset.participantMediaSlot = member.userId;
+      if (member.screenSharing) {
+        dom.participantGrid.appendChild(
+          createStageCard(member, `${member.userId}:screen`, true),
+        );
+        continue;
+      }
 
-      const mediaPlaceholder = createMediaPlaceholder();
-      mediaSlot.appendChild(mediaPlaceholder);
+      if (member.cameraEnabled) {
+        dom.participantGrid.appendChild(
+          createStageCard(member, `${member.userId}:camera`, true),
+        );
+        continue;
+      }
 
-      const cardFooter = document.createElement("div");
-      cardFooter.className = "participant-card-footer";
-
-      const cardName = document.createElement("div");
-      cardName.className = "participant-card-name";
-      cardName.textContent = member.username;
-
-      const cardBottom = document.createElement("div");
-      cardBottom.className = "participant-card-presence";
-      cardBottom.appendChild(createStatusIcon("mic", !member.muted));
-      cardBottom.appendChild(createStatusIcon("headphone", !member.deafened));
-
-      cardFooter.appendChild(cardName);
-      cardFooter.appendChild(cardBottom);
-
-      card.appendChild(mediaSlot);
-      card.appendChild(cardFooter);
-      dom.participantGrid.appendChild(card);
+      dom.participantGrid.appendChild(
+        createStageCard(member, member.userId, true),
+      );
     }
   };
 

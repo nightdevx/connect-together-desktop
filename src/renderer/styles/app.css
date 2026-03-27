@@ -939,6 +939,28 @@ button:active {
   letter-spacing: 0.02em;
 }
 
+.participant-media-placeholder-initial {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #e8ecff;
+  border: 1px solid rgba(126, 144, 194, 0.42);
+  background:
+    radial-gradient(
+      circle at 30% 30%,
+      rgba(129, 140, 248, 0.34),
+      transparent 58%
+    ),
+    rgba(22, 28, 52, 0.85);
+  box-shadow: 0 10px 28px rgba(70, 88, 170, 0.32);
+}
+
 .participant-stream-card {
   position: relative;
   width: 100%;

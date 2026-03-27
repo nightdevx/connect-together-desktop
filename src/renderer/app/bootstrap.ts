@@ -14,6 +14,7 @@ import type {
 } from "../features/voice/voice-video-share";
 import type {
   DesktopApi,
+  LobbyMemberSnapshot,
   DesktopPreferences,
   DesktopRuntimeConfig,
   DesktopUpdateState,
@@ -140,8 +141,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let realtimeTransport = "unknown";
   let realtimeReconnectAttempts = 0;
   let voiceJoinLatencyMs: number | null = null;
-  let connectionDiagActiveTab: "connection" | "privacy" = "connection";
-  let connectionDiagExpanded = false;
   const latencySamplesMs: number[] = [];
   let selfUserId: string | null = null;
   let registeredUsers: RegisteredUserSnapshot[] = [];
@@ -259,6 +258,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   });
 
   const lobbyController = createLobbyController(dom);
+  let refreshLobbyForDirectory: ((silent?: boolean) => Promise<void>) | null =
+    null;
 
   const directoryController = createDirectoryController({
     dom,
@@ -267,12 +268,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     getSelfUserId: () => selfUserId,
     setStatus,
     getErrorMessage,
-    refreshLobby: async (silent) => {
-      // Need it to exist or be defined correctly.
-      // Wait, there is a refreshLobby defined below?
-      // Yes, it takes boolean. Let's just call it.
-      // But JavaScript hoist doesn't work for const.
-      // We'll wrap it in another function call or any type.
+    refreshLobby: async (silent = true) => {
+      if (refreshLobbyForDirectory) {
+        await refreshLobbyForDirectory(silent);
+      }
     },
   });
 
@@ -288,6 +287,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       latencySamplesMs,
     }),
   });
+  diagnosticsController.bindEvents();
 
   const setConnectionState = (
     message: string,
@@ -714,6 +714,26 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     updateQuickMicButton();
   };
 
+  const updateSelfLobbyMemberState = (
+    patch: Partial<LobbyMemberSnapshot>,
+  ): void => {
+    const selfId = authController.getSelfUserId();
+    if (!selfId) {
+      return;
+    }
+
+    const current = lobbyController.getMembersMap().get(selfId);
+    if (!current) {
+      return;
+    }
+
+    lobbyController.addOrUpdateMember({
+      ...current,
+      ...patch,
+    });
+    directoryController.renderUserDirectory();
+  };
+
   const syncSpeakingState = async (speaking: boolean): Promise<void> => {
     if (!voiceConnected) {
       return;
@@ -791,7 +811,27 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       lobbyController.resolveMemberName(userId),
     onLiveKitLobbySnapshot: (members) => {
       liveKitLobbyStateActive = true;
-      lobbyController.renderLobby({ members, size: members.length });
+      const currentMemberMap = lobbyController.getMembersMap();
+      const mergedMembers = members.map((member) => {
+        const current = currentMemberMap.get(member.userId);
+        if (!current) {
+          return member;
+        }
+
+        const muted = current.muted;
+        const deafened = current.deafened;
+        return {
+          ...member,
+          muted,
+          deafened,
+          speaking: muted ? false : member.speaking,
+        };
+      });
+
+      lobbyController.renderLobby({
+        members: mergedMembers,
+        size: mergedMembers.length,
+      });
       directoryController.renderUserDirectory();
       void voiceController.onLobbyUpdated();
     },
@@ -1367,11 +1407,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const refreshLobby = async (silent = false): Promise<void> => {
-    if (liveKitLobbyStateActive && voiceConnected) {
-      await voiceController.onLobbyUpdated();
-      return;
-    }
-
     const result = await window.desktopApi.getLobbyState();
     if (!result.ok || !result.data) {
       if (!silent) {
@@ -1393,6 +1428,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       setStatus("Lobi yenilendi", false);
     }
   };
+  refreshLobbyForDirectory = refreshLobby;
 
   const connectToChat = async (): Promise<boolean> => {
     const joinStartedAt = performance.now();
@@ -1406,6 +1442,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     try {
       await voiceController.startVoice();
     } catch (error) {
+      await window.desktopApi.lobbyLeave().catch(() => undefined);
       const message =
         error instanceof Error ? error.message : "bilinmeyen hata";
       setStatus(`Ses başlatılamadı: ${message}`, true);
@@ -1431,6 +1468,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     await syncSpeakingState(isSpeaking && !isMuted);
+    updateSelfLobbyMemberState({
+      muted: isMuted,
+      deafened: isHeadphoneMuted,
+      speaking: isSpeaking && !isMuted,
+    });
 
     voiceConnected = true;
     voiceJoinLatencyMs = Math.round(performance.now() - joinStartedAt);
@@ -1527,6 +1569,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       isSpeaking = false;
       await syncSpeakingState(false);
     }
+    updateSelfLobbyMemberState({
+      muted: isMuted,
+      speaking: isSpeaking && !isMuted,
+    });
     updateMuteButton();
     if (playSound) {
       uiSoundController.play(isMuted ? "mic-off" : "mic-on");
@@ -1713,6 +1759,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   dom.navUsers.addEventListener("click", () => {
     workspaceController.setWorkspacePage("users");
+    void refreshLobby(true);
     void directoryController.refreshRegisteredUsers(true);
   });
 
@@ -1738,30 +1785,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   dom.settingsTabSession.addEventListener("click", () => {
     workspaceController.setSettingsTab("session");
-  });
-
-  dom.connectionDiagBanner.addEventListener("click", () => {
-    diagnosticsController.setConnectionDiagExpanded(!connectionDiagExpanded);
-  });
-
-  document.addEventListener("click", (event) => {
-    if (!connectionDiagExpanded) {
-      return;
-    }
-
-    const target = event.target;
-    if (!(target instanceof Node)) {
-      return;
-    }
-
-    if (
-      dom.connectionDiagBanner.contains(target) ||
-      dom.connectionDiagDetailsCard.contains(target)
-    ) {
-      return;
-    }
-
-    diagnosticsController.setConnectionDiagExpanded(false);
   });
 
   document.addEventListener("click", (event) => {
@@ -1799,23 +1822,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     closeParticipantAudioMenu();
   });
 
-  dom.connectionDiagTabConnection.addEventListener("click", () => {
-    diagnosticsController.setConnectionDiagTab("connection");
-  });
-
-  dom.connectionDiagTabPrivacy.addEventListener("click", () => {
-    diagnosticsController.setConnectionDiagTab("privacy");
-  });
-
-  dom.connectionDiagLearnMore.addEventListener("click", () => {
-    diagnosticsController.setConnectionDiagExpanded(true);
-    diagnosticsController.setConnectionDiagTab("privacy");
-    setStatus(
-      "Ses bağlantısı şifreli iletilir. Daha iyi kalite için mümkünse kablolu ağ kullan ve arka plandaki yüksek bant genişliği tüketimini azalt.",
-      false,
-    );
-  });
-
   dom.quickMicToggle.addEventListener("click", async () => {
     await setMicMuted(!isMuted);
   });
@@ -1838,6 +1844,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     if (isHeadphoneMuted) {
       await setMicMuted(true, false);
     }
+
+    updateSelfLobbyMemberState({
+      deafened: isHeadphoneMuted,
+      speaking: isSpeaking && !isMuted,
+    });
 
     uiSoundController.play(isHeadphoneMuted ? "headphone-off" : "headphone-on");
     updateQuickHeadphoneButton();
@@ -2356,8 +2367,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   authController.setAuthPage("login");
 
   workspaceController.setSettingsTab(activeSettingsTab);
-  diagnosticsController.setConnectionDiagExpanded(connectionDiagExpanded);
-  diagnosticsController.setConnectionDiagTab(connectionDiagActiveTab);
+  diagnosticsController.initialize();
   applyShareSettingsUi();
   setScreenModalOpen(false);
   voiceController.setOutputVolume(Number(dom.outputVolume.value || "100"));

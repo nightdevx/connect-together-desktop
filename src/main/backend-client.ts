@@ -41,6 +41,10 @@ export interface LobbyStateResponse {
   size: number;
 }
 
+export interface LobbyActionResponse {
+  accepted: boolean;
+}
+
 export interface MediaTransportResponse {
   transport: {
     id: string;
@@ -189,6 +193,63 @@ export class BackendClient {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+    });
+  }
+
+  public async joinLobby(accessToken: string): Promise<LobbyActionResponse> {
+    return this.request<LobbyActionResponse>("/lobby/join", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  }
+
+  public async leaveLobby(accessToken: string): Promise<LobbyActionResponse> {
+    return this.request<LobbyActionResponse>("/lobby/leave", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  }
+
+  public async setLobbyMute(
+    accessToken: string,
+    muted: boolean,
+  ): Promise<LobbyActionResponse> {
+    return this.request<LobbyActionResponse>("/lobby/mute", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ muted }),
+    });
+  }
+
+  public async setLobbyDeafen(
+    accessToken: string,
+    deafened: boolean,
+  ): Promise<LobbyActionResponse> {
+    return this.request<LobbyActionResponse>("/lobby/deafen", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ deafened }),
+    });
+  }
+
+  public async setLobbySpeaking(
+    accessToken: string,
+    speaking: boolean,
+  ): Promise<LobbyActionResponse> {
+    return this.request<LobbyActionResponse>("/lobby/speaking", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ speaking }),
     });
   }
 

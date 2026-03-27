@@ -250,16 +250,13 @@ export const createUpdaterViewController = (
     }
 
     if (state.status === "downloaded") {
-      setUpdateHint("Güncelleme tamamlandı, yeniden başlatılıyor...");
+      setUpdateHint("Güncelleme tamamlandı, otomatik kuruluyor...");
       setUpdateActionButton(null);
       setSettingsSummary(
-        `${availableVersion} indirildi. Yeniden başlatınca uygulanacak.`,
+        `${availableVersion} indirildi. Kurulum tamamlanınca uygulama otomatik yeniden başlayacak.`,
         "ok",
       );
-      setSettingsUpdateInstallButton({
-        label: "Yeniden Başlat",
-        disabled: isActionInFlight,
-      });
+      setSettingsUpdateInstallButton(null);
       return;
     }
 

@@ -81,6 +81,7 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
     didBindAutoUpdaterEvents = true;
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoRunAppAfterInstall = true;
 
     autoUpdater.on("checking-for-update", () => {
       updateState({
@@ -137,7 +138,8 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
 
       if (installAfterDownloadRequested) {
         setTimeout(() => {
-          autoUpdater.quitAndInstall();
+          // Silent install avoids showing NSIS assistant pages during update.
+          autoUpdater.quitAndInstall(true, true);
         }, 250);
       }
     });
@@ -187,7 +189,7 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
     bindAutoUpdaterEvents();
 
     if (state.status === "downloaded") {
-      autoUpdater.quitAndInstall();
+      autoUpdater.quitAndInstall(true, true);
       return {
         accepted: true,
         state: cloneState(state),

@@ -250,31 +250,48 @@ export const createRemoteMediaUiController = (
     }
   };
 
-  const createMediaPlaceholder = (): HTMLDivElement => {
+  const createMediaPlaceholder = (displayName: string): HTMLDivElement => {
     const placeholder = document.createElement("div");
     placeholder.className = "participant-media-placeholder";
 
-    const logo = document.createElement("img");
-    logo.className = "participant-media-placeholder-logo";
-    logo.src = "./images/logo.png";
-    logo.alt = "Connect Together";
+    const initials = document.createElement("span");
+    initials.className = "participant-media-placeholder-initial";
+    initials.textContent = displayName.charAt(0).toUpperCase();
 
     const text = document.createElement("span");
     text.className = "participant-media-placeholder-text";
     text.textContent = "Kamera veya ekran kapali";
 
-    placeholder.appendChild(logo);
+    placeholder.appendChild(initials);
     placeholder.appendChild(text);
 
     return placeholder;
   };
 
-  const findParticipantMediaSlot = (userId: string): HTMLElement | null => {
+  const findParticipantMediaSlot = (
+    userId: string,
+    sourceType: MediaSourceType,
+  ): HTMLElement | null => {
+    const preferredKey = `${userId}:${sourceType}`;
     const slots = deps.dom.participantGrid.querySelectorAll<HTMLElement>(
       "[data-participant-media-slot]",
     );
+
+    for (const slot of Array.from(slots)) {
+      if (slot.dataset.participantMediaSlot === preferredKey) {
+        return slot;
+      }
+    }
+
     for (const slot of Array.from(slots)) {
       if (slot.dataset.participantMediaSlot === userId) {
+        return slot;
+      }
+    }
+
+    for (const slot of Array.from(slots)) {
+      const slotKey = slot.dataset.participantMediaSlot ?? "";
+      if (slotKey.startsWith(`${userId}:`)) {
         return slot;
       }
     }
@@ -295,7 +312,10 @@ export const createRemoteMediaUiController = (
       return;
     }
 
-    const placeholder = createMediaPlaceholder();
+    const rawKey = slot.dataset.participantMediaSlot ?? "";
+    const userId = rawKey.split(":")[0] ?? rawKey;
+    const displayName = deps.resolveMemberName(userId || rawKey);
+    const placeholder = createMediaPlaceholder(displayName);
     slot.appendChild(placeholder);
   };
 
@@ -363,7 +383,7 @@ export const createRemoteMediaUiController = (
   });
 
   const attachVideoEntryToSlot = (entry: RemoteVideoEntry): void => {
-    const slot = findParticipantMediaSlot(entry.userId);
+    const slot = findParticipantMediaSlot(entry.userId, entry.sourceType);
     if (!slot) {
       return;
     }
