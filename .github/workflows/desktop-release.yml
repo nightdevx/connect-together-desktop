@@ -63,6 +63,8 @@ jobs:
 
       - name: Build desktop release artifacts
         if: steps.release_check.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:win
 
       - name: Publish GitHub release
