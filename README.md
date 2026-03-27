@@ -57,3 +57,7 @@ Desktop istemci `electron-updater` ile GitHub release uzerinden otomatik guncell
 4. GitHub release olusturup bu dosyalari yukler.
 
 Not: Yeni OTA dagitimi icin `desktop/package.json` versiyonunu arttirman gerekir.
+
+
+
+kullanıcı başka kullanıcıların mikrofon ve kulaklık durumlarını sürekli açık olarak görüyor.kapatılıp açılsa bile aynı şekilde kalıyor bu sorunu düzelt.ilk bağlanıldığında mikrofon kapalı oluyor ama ses gidiyor.bunuda düzelt.lobide kullanıcıların gözüktüğü yerde kutularda uygulama ikonu değil,eğer yayın ya da kamera açık değilse kullanıcı listesindeki gibi harfler gözükmesini sağla.kullanıcı hem kamera hem yayın açarsa kameranın kullanıcı kutusunda,yayınında ekstra bir kutuda sadece altta yine kullanıcının adı gözükecek şekilde olmasını sağla.
