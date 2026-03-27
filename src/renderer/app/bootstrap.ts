@@ -94,6 +94,10 @@ const clampThresholdPercent = (value: number): number => {
 };
 
 const clampParticipantVolumePercent = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
   return Math.max(0, Math.min(200, Math.round(value)));
 };
 

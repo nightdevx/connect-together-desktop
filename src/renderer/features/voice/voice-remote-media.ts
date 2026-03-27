@@ -68,7 +68,17 @@ export const createRemoteMediaUiController = (
   let expandedVideoKey: string | null = null;
 
   const clampParticipantVolume = (value: number): number => {
+    if (!Number.isFinite(value)) {
+      return 100;
+    }
+
     return Math.max(0, Math.min(200, Math.round(value)));
+  };
+
+  const applyRemoteAudioStateToAllEntries = (): void => {
+    for (const entry of remoteAudioMap.values()) {
+      applyRemoteAudioStateToEntry(entry);
+    }
   };
 
   const getParticipantAudioStateInternal = (
@@ -91,6 +101,10 @@ export const createRemoteMediaUiController = (
         remoteAudioContext = new AudioContext({
           latencyHint: "interactive",
         });
+
+        remoteAudioContext.onstatechange = () => {
+          applyRemoteAudioStateToAllEntries();
+        };
       } catch {
         return null;
       }
@@ -105,6 +119,24 @@ export const createRemoteMediaUiController = (
     return remoteAudioContext;
   };
 
+  const tryResumeRemoteAudioContext = (): void => {
+    const context = ensureRemoteAudioContext();
+    if (!context) {
+      return;
+    }
+
+    if (context.state === "running") {
+      applyRemoteAudioStateToAllEntries();
+      return;
+    }
+
+    void context.resume().then(() => {
+      applyRemoteAudioStateToAllEntries();
+    }).catch(() => {
+      // no-op
+    });
+  };
+
   const applyRemoteAudioStateToEntry = (entry: RemoteAudioEntry): void => {
     const participantState = getParticipantAudioStateInternal(entry.userId);
     const participantGain = participantState.muted
@@ -114,7 +146,10 @@ export const createRemoteMediaUiController = (
       ? 0
       : Math.max(0, outputVolumeLevel * participantGain);
 
-    if (entry.gainNode) {
+    const canUseGainNode =
+      Boolean(entry.gainNode) && remoteAudioContext?.state === "running";
+
+    if (canUseGainNode && entry.gainNode) {
       entry.audio.muted = true;
       entry.gainNode.gain.value = Math.max(0, Math.min(2, effectiveGain));
       return;
@@ -123,6 +158,15 @@ export const createRemoteMediaUiController = (
     entry.audio.muted = false;
     entry.audio.volume = Math.max(0, Math.min(1, effectiveGain));
   };
+
+  const handlePlaybackUnlock = (): void => {
+    tryResumeRemoteAudioContext();
+  };
+
+  window.addEventListener("pointerdown", handlePlaybackUnlock, {
+    passive: true,
+  });
+  window.addEventListener("keydown", handlePlaybackUnlock);
 
   const applyRemoteAudioStateToUser = (userId: string): void => {
     for (const entry of remoteAudioMap.values()) {
@@ -331,6 +375,7 @@ export const createRemoteMediaUiController = (
     void existing.audio.play().catch(() => {
       // no-op
     });
+    tryResumeRemoteAudioContext();
     applyRemoteAudioStateToEntry(existing);
   };
 
@@ -553,9 +598,8 @@ export const createRemoteMediaUiController = (
     (volumeLevel, muted) => {
       outputVolumeLevel = Math.max(0, Math.min(1, volumeLevel));
       outputMuted = muted;
-      for (const entry of remoteAudioMap.values()) {
-        applyRemoteAudioStateToEntry(entry);
-      }
+      tryResumeRemoteAudioContext();
+      applyRemoteAudioStateToAllEntries();
     };
 
   const setParticipantAudioState: RemoteMediaUiController["setParticipantAudioState"] =
@@ -574,6 +618,7 @@ export const createRemoteMediaUiController = (
       };
 
       participantAudioStateMap.set(userId, next);
+      tryResumeRemoteAudioContext();
       applyRemoteAudioStateToUser(userId);
     };
 
@@ -606,6 +651,7 @@ export const createRemoteMediaUiController = (
     }
 
     if (remoteAudioContext) {
+      remoteAudioContext.onstatechange = null;
       void remoteAudioContext.close().catch(() => {
         // no-op
       });
