@@ -467,6 +467,18 @@ export const buildDesktopLayout = (): string => {
                       </div>
                       <button id="launchAtStartupToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Kapalı</button>
                     </div>
+
+                    <div class="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2/50 px-3 py-2.5">
+                      <div>
+                        <p class="m-0 text-sm font-medium text-text-primary">GPU Hızlandırma</p>
+                        <p class="m-0 mt-0.5 text-[11px] text-text-muted">Daha akıcı kamera ve yayın işleme sağlar. Değişiklik için uygulamayı yeniden başlatman gerekir.</p>
+                      </div>
+                      <button id="gpuAccelerationToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Kapalı</button>
+                    </div>
+
+                    <div class="flex items-center justify-end">
+                      <button id="gpuRestartButton" class="btn-primary h-9 px-4 text-xs" type="button">Şimdi Yeniden Başlat</button>
+                    </div>
                   </div>
 
                   <section id="settingsUpdatesCard" class="settings-updates-card mb-4 rounded-xl border border-border bg-surface-2/50 px-3 py-3">

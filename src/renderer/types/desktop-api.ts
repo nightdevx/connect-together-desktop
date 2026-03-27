@@ -69,6 +69,7 @@ export interface DesktopRuntimeConfig {
 export interface DesktopPreferences {
   closeToTrayOnClose: boolean;
   launchAtStartup: boolean;
+  gpuAccelerationEnabled: boolean;
 }
 
 export type DesktopUpdateStatus =
@@ -119,6 +120,7 @@ export interface DesktopApi {
   windowMinimize: () => Promise<void>;
   windowToggleMaximize: () => Promise<{ isMaximized: boolean }>;
   windowClose: () => Promise<void>;
+  restartApp: () => Promise<DesktopResult<{ accepted: boolean }>>;
   getWindowState: () => Promise<{ isMaximized: boolean }>;
   onWindowStateChanged: (
     handler: (payload: { isMaximized: boolean }) => void,

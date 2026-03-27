@@ -46,6 +46,7 @@ interface DesktopRuntimeConfig {
 interface DesktopPreferences {
   closeToTrayOnClose: boolean;
   launchAtStartup: boolean;
+  gpuAccelerationEnabled: boolean;
 }
 
 type DesktopUpdateStatus =
@@ -88,6 +89,7 @@ interface DesktopApi {
   windowMinimize: () => Promise<void>;
   windowToggleMaximize: () => Promise<{ isMaximized: boolean }>;
   windowClose: () => Promise<void>;
+  restartApp: () => Promise<DesktopResult<{ accepted: boolean }>>;
   getWindowState: () => Promise<{ isMaximized: boolean }>;
   onWindowStateChanged: (
     handler: (payload: { isMaximized: boolean }) => void,
@@ -251,6 +253,9 @@ const desktopApi: DesktopApi = {
   },
   windowClose: async () => {
     return ipcRenderer.invoke("desktop:window-close");
+  },
+  restartApp: async () => {
+    return ipcRenderer.invoke("desktop:app-relaunch");
   },
   getWindowState: async () => {
     return ipcRenderer.invoke("desktop:get-window-state");

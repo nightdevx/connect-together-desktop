@@ -37,6 +37,7 @@ export const createWorkspaceController = (
   let activeSettingsTab: SettingsTab = "profile";
   let closeToTrayOnClose = false;
   let launchAtStartup = false;
+  let gpuAccelerationEnabled = false;
   let unsubscribeWindowState: (() => void) | null = null;
 
   const setSettingsTab = (tab: SettingsTab): void => {
@@ -101,6 +102,14 @@ export const createWorkspaceController = (
 
     dom.launchAtStartupToggle.classList.toggle("enabled", launchAtStartup);
     dom.launchAtStartupToggle.textContent = launchAtStartup ? "Açık" : "Kapalı";
+
+    dom.gpuAccelerationToggle.classList.toggle(
+      "enabled",
+      gpuAccelerationEnabled,
+    );
+    dom.gpuAccelerationToggle.textContent = gpuAccelerationEnabled
+      ? "Açık"
+      : "Kapalı";
   };
 
   const bindEvents = (): void => {
@@ -129,6 +138,7 @@ export const createWorkspaceController = (
         });
         closeToTrayOnClose = next.closeToTrayOnClose;
         launchAtStartup = next.launchAtStartup;
+        gpuAccelerationEnabled = next.gpuAccelerationEnabled;
         updateDesktopPreferenceToggles();
         setStatus(
           closeToTrayOnClose
@@ -151,6 +161,7 @@ export const createWorkspaceController = (
         });
         closeToTrayOnClose = next.closeToTrayOnClose;
         launchAtStartup = next.launchAtStartup;
+        gpuAccelerationEnabled = next.gpuAccelerationEnabled;
         updateDesktopPreferenceToggles();
         setStatus(
           launchAtStartup
@@ -162,6 +173,29 @@ export const createWorkspaceController = (
         launchAtStartup = !launchAtStartup;
         updateDesktopPreferenceToggles();
         setStatus("Baslangic ayari guncellenemedi", true);
+      }
+    });
+
+    dom.gpuAccelerationToggle.addEventListener("click", async () => {
+      gpuAccelerationEnabled = !gpuAccelerationEnabled;
+      try {
+        const next = await desktopApi.updateDesktopPreferences({
+          gpuAccelerationEnabled,
+        });
+        closeToTrayOnClose = next.closeToTrayOnClose;
+        launchAtStartup = next.launchAtStartup;
+        gpuAccelerationEnabled = next.gpuAccelerationEnabled;
+        updateDesktopPreferenceToggles();
+        setStatus(
+          gpuAccelerationEnabled
+            ? "GPU hizlandirma acildi. Degisiklik icin uygulamayi yeniden baslatin"
+            : "GPU hizlandirma kapatildi. Degisiklik icin uygulamayi yeniden baslatin",
+          false,
+        );
+      } catch {
+        gpuAccelerationEnabled = !gpuAccelerationEnabled;
+        updateDesktopPreferenceToggles();
+        setStatus("GPU hizlandirma ayari guncellenemedi", true);
       }
     });
 
@@ -219,9 +253,11 @@ export const createWorkspaceController = (
         await desktopApi.getDesktopPreferences();
       closeToTrayOnClose = preferences.closeToTrayOnClose;
       launchAtStartup = preferences.launchAtStartup;
+      gpuAccelerationEnabled = preferences.gpuAccelerationEnabled;
     } catch {
       closeToTrayOnClose = false;
       launchAtStartup = false;
+      gpuAccelerationEnabled = false;
     }
 
     updateDesktopPreferenceToggles();

@@ -74,9 +74,12 @@ export const createDirectoryController = (
     }
 
     for (const user of visibleUsers) {
-      const inLobby = activeMembers.has(user.userId);
+      const lobbyMember = activeMembers.get(user.userId);
+      const inLobby = lobbyMember !== undefined;
       const appOnline = user.appOnline === true;
       const online = inLobby || appOnline;
+      const speaking =
+        lobbyMember?.speaking === true && lobbyMember.muted !== true;
       const item = document.createElement("li");
       item.className =
         "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
@@ -107,23 +110,23 @@ export const createDirectoryController = (
 
       const createPresenceBadge = (
         label: string,
-        tone: "online" | "lobby" | "offline",
+        tone: "online" | "talking" | "offline",
       ): HTMLElement => {
         const badge = document.createElement("span");
         badge.className =
           "inline-flex items-center gap-1 rounded-full border px-2 py-0.5";
 
-        if (tone === "lobby") {
+        if (tone === "talking") {
           badge.classList.add(
-            "border-emerald-400/55",
-            "text-emerald-200",
-            "bg-emerald-400/15",
+            "border-amber-400/60",
+            "text-amber-100",
+            "bg-amber-400/20",
           );
         } else if (tone === "online") {
           badge.classList.add(
-            "border-sky-400/55",
-            "text-sky-200",
-            "bg-sky-400/15",
+            "border-emerald-400/55",
+            "text-emerald-100",
+            "bg-emerald-400/15",
           );
         } else {
           badge.classList.add(
@@ -135,10 +138,10 @@ export const createDirectoryController = (
 
         const dot = document.createElement("span");
         dot.className = "w-1.5 h-1.5 rounded-full";
-        if (tone === "lobby") {
-          dot.classList.add("bg-emerald-300");
+        if (tone === "talking") {
+          dot.classList.add("bg-amber-300");
         } else if (tone === "online") {
-          dot.classList.add("bg-sky-300");
+          dot.classList.add("bg-emerald-300");
         } else {
           dot.classList.add("bg-text-muted");
         }
@@ -151,16 +154,12 @@ export const createDirectoryController = (
         return badge;
       };
 
-      if (inLobby) {
-        presence.appendChild(createPresenceBadge("lobide", "lobby"));
-      }
-
-      if (appOnline) {
-        presence.appendChild(createPresenceBadge("uygulamada", "online"));
-      }
-
-      if (!inLobby && !appOnline) {
-        presence.appendChild(createPresenceBadge("cevrimdisi", "offline"));
+      if (speaking) {
+        presence.appendChild(createPresenceBadge("konuşmada", "talking"));
+      } else if (online) {
+        presence.appendChild(createPresenceBadge("çevrimiçi", "online"));
+      } else {
+        presence.appendChild(createPresenceBadge("çevrimdışı", "offline"));
       }
 
       item.appendChild(identity);

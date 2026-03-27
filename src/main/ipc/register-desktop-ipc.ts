@@ -1,5 +1,5 @@
 import type { UserProfile } from "../../shared/contracts";
-import { BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { DesktopApiError } from "../backend-client";
 import type { DesktopPreferences } from "../types";
 import type { ApiErrorPayload, DesktopResult, SessionSnapshot } from "../types";
@@ -227,6 +227,16 @@ export const registerDesktopIpcHandlers = (
     }
   });
 
+  ipcMain.handle("desktop:app-relaunch", async () => {
+    try {
+      app.relaunch();
+      app.exit(0);
+      return helpers.ok({ accepted: true });
+    } catch (error) {
+      return helpers.fail(error);
+    }
+  });
+
   ipcMain.handle("desktop:get-window-state", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return {
@@ -250,6 +260,9 @@ export const registerDesktopIpcHandlers = (
     }
     if (typeof source.launchAtStartup === "boolean") {
       patch.launchAtStartup = source.launchAtStartup;
+    }
+    if (typeof source.gpuAccelerationEnabled === "boolean") {
+      patch.gpuAccelerationEnabled = source.gpuAccelerationEnabled;
     }
 
     return deps.updateDesktopPreferences(patch);

@@ -6,7 +6,8 @@ export default defineConfig({
   root: path.resolve(__dirname, "src/renderer"),
   // Electron production uses file://, so asset links must be relative.
   base: "./",
-  publicDir: false,
+  // Keep shared static assets (logo.ico/logo.png) available in both dev and build.
+  publicDir: "../../public",
   plugins: [tailwindcss()],
   server: {
     host: "127.0.0.1",

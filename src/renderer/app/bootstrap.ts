@@ -159,6 +159,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let effectiveSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
   let closeToTrayOnClose = false;
   let launchAtStartup = false;
+  let gpuAccelerationEnabled = false;
   let cameraResolution = "1280x720";
   let cameraFps = "30";
   let screenResolution = "1920x1080";
@@ -501,6 +502,22 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const updateRnnoiseToggle = (): void => {
     dom.rnnoiseToggle.classList.toggle("enabled", rnnoiseEnabled);
     dom.rnnoiseToggle.textContent = rnnoiseEnabled ? "Açık" : "Kapalı";
+  };
+
+  const updateDesktopPreferenceToggles = (): void => {
+    dom.closeToTrayToggle.classList.toggle("enabled", closeToTrayOnClose);
+    dom.closeToTrayToggle.textContent = closeToTrayOnClose ? "Açık" : "Kapalı";
+
+    dom.launchAtStartupToggle.classList.toggle("enabled", launchAtStartup);
+    dom.launchAtStartupToggle.textContent = launchAtStartup ? "Açık" : "Kapalı";
+
+    dom.gpuAccelerationToggle.classList.toggle(
+      "enabled",
+      gpuAccelerationEnabled,
+    );
+    dom.gpuAccelerationToggle.textContent = gpuAccelerationEnabled
+      ? "Açık"
+      : "Kapalı";
   };
 
   const persistUiSoundsPreference = (): void => {
@@ -1838,9 +1855,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       await desktopApi.getDesktopPreferences();
     closeToTrayOnClose = preferences.closeToTrayOnClose;
     launchAtStartup = preferences.launchAtStartup;
+    gpuAccelerationEnabled = preferences.gpuAccelerationEnabled;
   } catch {
     closeToTrayOnClose = false;
     launchAtStartup = false;
+    gpuAccelerationEnabled = false;
   }
 
   dom.windowMinimize.addEventListener("click", () => {
@@ -1868,7 +1887,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       });
       closeToTrayOnClose = next.closeToTrayOnClose;
       launchAtStartup = next.launchAtStartup;
-      workspaceController.updateDesktopPreferenceToggles();
+      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
+      updateDesktopPreferenceToggles();
       setStatus(
         closeToTrayOnClose
           ? "Kapat tusu tepsiye gonderme moduna alindi"
@@ -1877,7 +1897,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       );
     } catch {
       closeToTrayOnClose = !closeToTrayOnClose;
-      workspaceController.updateDesktopPreferenceToggles();
+      updateDesktopPreferenceToggles();
       setStatus("Tepsi ayari guncellenemedi", true);
     }
   });
@@ -1890,7 +1910,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       });
       closeToTrayOnClose = next.closeToTrayOnClose;
       launchAtStartup = next.launchAtStartup;
-      workspaceController.updateDesktopPreferenceToggles();
+      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
+      updateDesktopPreferenceToggles();
       setStatus(
         launchAtStartup
           ? "Windows baslangicinda otomatik calisma acildi"
@@ -1899,8 +1920,52 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       );
     } catch {
       launchAtStartup = !launchAtStartup;
-      workspaceController.updateDesktopPreferenceToggles();
+      updateDesktopPreferenceToggles();
       setStatus("Baslangic ayari guncellenemedi", true);
+    }
+  });
+
+  dom.gpuAccelerationToggle.addEventListener("click", async () => {
+    gpuAccelerationEnabled = !gpuAccelerationEnabled;
+    try {
+      const next = await desktopApi.updateDesktopPreferences({
+        gpuAccelerationEnabled,
+      });
+      closeToTrayOnClose = next.closeToTrayOnClose;
+      launchAtStartup = next.launchAtStartup;
+      gpuAccelerationEnabled = next.gpuAccelerationEnabled;
+      updateDesktopPreferenceToggles();
+      setStatus(
+        gpuAccelerationEnabled
+          ? "GPU hizlandirma acildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin."
+          : "GPU hizlandirma kapatildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin.",
+        false,
+      );
+    } catch {
+      gpuAccelerationEnabled = !gpuAccelerationEnabled;
+      updateDesktopPreferenceToggles();
+      setStatus("GPU hizlandirma ayari guncellenemedi", true);
+    }
+  });
+
+  dom.gpuRestartButton.addEventListener("click", async () => {
+    const previousLabel = dom.gpuRestartButton.textContent;
+    dom.gpuRestartButton.disabled = true;
+    dom.gpuRestartButton.textContent = "Yeniden baslatiliyor...";
+    setStatus("Uygulama yeniden baslatiliyor...", false);
+
+    try {
+      const result = await desktopApi.restartApp();
+      if (!result.ok) {
+        throw result.error;
+      }
+    } catch (error) {
+      dom.gpuRestartButton.disabled = false;
+      dom.gpuRestartButton.textContent = previousLabel;
+      setStatus(
+        `Uygulama yeniden baslatilamadi: ${getErrorMessage(error as { message?: string })}`,
+        true,
+      );
     }
   });
 
@@ -2547,7 +2612,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   updateScreenShareButton();
   updateUiSoundsToggle();
   updateRnnoiseToggle();
-  workspaceController.updateDesktopPreferenceToggles();
+  updateDesktopPreferenceToggles();
   diagnosticsController.updateConnectionDiagnostics();
   void voiceController.listMicrophones();
   updateMuteButton();

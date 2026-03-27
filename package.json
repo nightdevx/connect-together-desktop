@@ -63,6 +63,7 @@
       "!**/.vscode/**"
     ],
     "win": {
+      "icon": "public/images/logo.ico",
       "artifactName": "Connect-Together-Setup-${version}.${ext}",
       "target": [
         {
@@ -74,6 +75,9 @@
       ]
     },
     "nsis": {
+      "installerIcon": "public/images/logo.ico",
+      "uninstallerIcon": "public/images/logo.ico",
+      "installerHeaderIcon": "public/images/logo.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },

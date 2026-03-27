@@ -15,37 +15,119 @@ import { RealtimeClient } from "./realtime-client";
 import { SessionStore } from "./session-store";
 import type { DesktopUpdateState } from "./types";
 import { createMainWindow } from "./window/create-main-window";
+import { createUpdateInstallWindow } from "./window/create-update-install-window";
 
 let mainWindow: BrowserWindow | null = null;
+let updateInstallWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
-app.disableHardwareAcceleration();
+const desktopPreferencesStore = new DesktopPreferencesStore();
+const APP_USER_MODEL_ID = "com.nightdijital.connecttogether.desktop";
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+
+const applyGpuAccelerationPreference = (enabled: boolean): void => {
+  if (!enabled) {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch("disable-gpu");
+    return;
+  }
+
+  // Enable a conservative GPU pipeline for smoother camera/screen rendering.
+  app.commandLine.appendSwitch("enable-gpu-rasterization");
+  app.commandLine.appendSwitch("enable-zero-copy");
+  app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+};
+
+const initialDesktopPreferences = desktopPreferencesStore.get();
+applyGpuAccelerationPreference(
+  initialDesktopPreferences.gpuAccelerationEnabled,
+);
 
 console.log(
   `[desktop] backend base url resolved: ${backendBaseUrl} (env: ${loadedEnvPath ?? "none"})`,
+);
+console.log(
+  `[desktop] gpu acceleration ${initialDesktopPreferences.gpuAccelerationEnabled ? "enabled" : "disabled"}`,
 );
 
 const backendClient = new BackendClient(backendBaseUrl);
 const realtimeClient = new RealtimeClient(backendBaseUrl);
 const sessionStore = new SessionStore();
-const desktopPreferencesStore = new DesktopPreferencesStore();
-const appUpdater = createDesktopAppUpdater();
+
+const showUpdateInstallWindow = (): void => {
+  if (updateInstallWindow && !updateInstallWindow.isDestroyed()) {
+    updateInstallWindow.show();
+    updateInstallWindow.focus();
+    return;
+  }
+
+  updateInstallWindow = createUpdateInstallWindow();
+  updateInstallWindow.on("closed", () => {
+    updateInstallWindow = null;
+  });
+};
+
+const appUpdater = createDesktopAppUpdater({
+  onBeforeQuitAndInstall: () => {
+    isQuitting = true;
+    destroyTray();
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+
+    showUpdateInstallWindow();
+  },
+});
 
 const applyLaunchAtStartup = (enabled: boolean): void => {
   app.setLoginItemSettings({ openAtLogin: enabled });
 };
 
-const resolveLogoPath = (): string => {
-  const devPath = path.join(__dirname, "../../public/images/logo.png");
-  if (fs.existsSync(devPath)) {
-    return devPath;
+const resolveLogoAssetPath = (fileName: "logo.png" | "logo.ico"): string => {
+  const fallbackPath = path.join(process.cwd(), "public", "images", fileName);
+  const candidates = [
+    fallbackPath,
+    path.join(process.cwd(), "dist", "renderer", "images", fileName),
+    path.join(__dirname, "../renderer/images", fileName),
+    path.join(app.getAppPath(), "public", "images", fileName),
+    path.join(app.getAppPath(), "dist", "renderer", "images", fileName),
+  ];
+
+  for (const candidatePath of candidates) {
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
   }
 
-  return path.join(__dirname, "../renderer/images/logo.png");
+  return fallbackPath;
+};
+
+const resolveTrayLogoPath = (): string => {
+  const preferredFiles: Array<"logo.png" | "logo.ico"> = [
+    "logo.png",
+    "logo.ico",
+  ];
+
+  for (const fileName of preferredFiles) {
+    const candidatePath = resolveLogoAssetPath(fileName);
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return resolveLogoAssetPath("logo.png");
 };
 
 const createTrayIcon = () => {
-  const image = nativeImage.createFromPath(resolveLogoPath());
+  let image = nativeImage.createFromPath(resolveTrayLogoPath());
+  if (image.isEmpty()) {
+    image = nativeImage.createFromPath(resolveLogoAssetPath("logo.ico"));
+  }
+
   return image.resize({ width: 16, height: 16 });
 };
 
@@ -149,11 +231,26 @@ registerDesktopIpcHandlers({
   }),
   getDesktopPreferences: () => desktopPreferencesStore.get(),
   updateDesktopPreferences: (patch) => {
+    const previous = desktopPreferencesStore.get();
     const next = desktopPreferencesStore.update(patch);
     applyLaunchAtStartup(next.launchAtStartup);
     if (!next.closeToTrayOnClose) {
       destroyTray();
     }
+
+    if (
+      previous.gpuAccelerationEnabled !== next.gpuAccelerationEnabled &&
+      mainWindow &&
+      !mainWindow.isDestroyed()
+    ) {
+      emitRealtimeEvent({
+        type: "system-error",
+        code: "GPU_ACCELERATION_RESTART_REQUIRED",
+        message:
+          "GPU hizlandirma ayari degisti. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin.",
+      });
+    }
+
     return next;
   },
   getUpdateState: () => appUpdater.getState(),
@@ -190,6 +287,31 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+});
+
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU") {
+    return;
+  }
+
+  const reason = details.reason ?? "unknown";
+  console.warn(
+    `[desktop] gpu process exited: reason=${reason} code=${details.exitCode ?? "n/a"}`,
+  );
+
+  if (
+    reason !== "clean-exit" &&
+    desktopPreferencesStore.get().gpuAccelerationEnabled
+  ) {
+    desktopPreferencesStore.update({ gpuAccelerationEnabled: false });
+
+    emitRealtimeEvent({
+      type: "system-error",
+      code: "GPU_ACCELERATION_FALLBACK",
+      message:
+        "GPU hizlandirma kararsizlik nedeniyle otomatik kapatildi. Stabil mod icin uygulamayi yeniden baslatin.",
+    });
+  }
 });
 
 app.on("window-all-closed", () => {

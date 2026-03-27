@@ -10,6 +10,10 @@ interface DesktopAppUpdater {
   startBackgroundChecks: () => void;
 }
 
+interface CreateDesktopAppUpdaterOptions {
+  onBeforeQuitAndInstall?: () => void;
+}
+
 const cloneState = (state: DesktopUpdateState): DesktopUpdateState => {
   return {
     status: state.status,
@@ -21,7 +25,9 @@ const cloneState = (state: DesktopUpdateState): DesktopUpdateState => {
   };
 };
 
-export const createDesktopAppUpdater = (): DesktopAppUpdater => {
+export const createDesktopAppUpdater = (
+  options: CreateDesktopAppUpdaterOptions = {},
+): DesktopAppUpdater => {
   const listeners = new Set<(state: DesktopUpdateState) => void>();
 
   const normalizeUpdaterErrorMessage = (error: unknown): string => {
@@ -56,6 +62,27 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
   let intervalRef: NodeJS.Timeout | null = null;
   let didBindAutoUpdaterEvents = false;
   let installAfterDownloadRequested = false;
+  let didTriggerQuitAndInstall = false;
+
+  const quitAndInstall = (): void => {
+    if (didTriggerQuitAndInstall) {
+      return;
+    }
+
+    didTriggerQuitAndInstall = true;
+    installAfterDownloadRequested = false;
+
+    try {
+      options.onBeforeQuitAndInstall?.();
+    } catch (error) {
+      console.warn("[desktop] onBeforeQuitAndInstall failed:", error);
+    }
+
+    // Give the dedicated update window enough time to paint before quitting.
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(true, true);
+    }, 450);
+  };
 
   const emit = (): void => {
     const snapshot = cloneState(state);
@@ -137,10 +164,8 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
       });
 
       if (installAfterDownloadRequested) {
-        setTimeout(() => {
-          // Silent install avoids showing NSIS assistant pages during update.
-          autoUpdater.quitAndInstall(true, true);
-        }, 250);
+        // Silent install avoids showing NSIS assistant pages during update.
+        quitAndInstall();
       }
     });
 
@@ -189,7 +214,7 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
     bindAutoUpdaterEvents();
 
     if (state.status === "downloaded") {
-      autoUpdater.quitAndInstall(true, true);
+      quitAndInstall();
       return {
         accepted: true,
         state: cloneState(state),

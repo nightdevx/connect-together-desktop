@@ -34,6 +34,7 @@ export interface DesktopRuntimeConfig {
 export interface DesktopPreferences {
   closeToTrayOnClose: boolean;
   launchAtStartup: boolean;
+  gpuAccelerationEnabled: boolean;
 }
 
 export type DesktopUpdateStatus =

@@ -1,17 +1,45 @@
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-const resolveLogoPath = (): string => {
-  const devPath = path.join(__dirname, "../../public/images/logo.png");
-  if (fs.existsSync(devPath)) {
-    return devPath;
+const resolveLogoAssetPath = (fileName: "logo.png" | "logo.ico"): string => {
+  const fallbackPath = path.join(process.cwd(), "public", "images", fileName);
+  const candidates = [
+    fallbackPath,
+    path.join(process.cwd(), "dist", "renderer", "images", fileName),
+    path.join(__dirname, "../../renderer/images", fileName),
+    path.join(app.getAppPath(), "public", "images", fileName),
+    path.join(app.getAppPath(), "dist", "renderer", "images", fileName),
+  ];
+
+  for (const candidatePath of candidates) {
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
   }
 
-  return path.join(__dirname, "../renderer/images/logo.png");
+  return fallbackPath;
+};
+
+const resolveWindowIconPath = (): string => {
+  const fallbackFile: "logo.png" | "logo.ico" =
+    process.platform === "win32" ? "logo.ico" : "logo.png";
+  const preferredFiles: Array<"logo.png" | "logo.ico"> =
+    process.platform === "win32"
+      ? ["logo.ico", "logo.png"]
+      : ["logo.png", "logo.ico"];
+
+  for (const fileName of preferredFiles) {
+    const candidatePath = resolveLogoAssetPath(fileName);
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return resolveLogoAssetPath(fallbackFile);
 };
 
 const loadFallbackContent = async (win: BrowserWindow): Promise<void> => {
@@ -101,7 +129,7 @@ export const createMainWindow = async (): Promise<BrowserWindow> => {
     frame: false,
     titleBarStyle: "hidden",
     autoHideMenuBar: true,
-    icon: resolveLogoPath(),
+    icon: resolveWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "../preload.js"),
       contextIsolation: true,

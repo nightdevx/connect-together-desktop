@@ -5,11 +5,13 @@ import path from "node:path";
 export interface DesktopPreferences {
   closeToTrayOnClose: boolean;
   launchAtStartup: boolean;
+  gpuAccelerationEnabled: boolean;
 }
 
 const DEFAULT_PREFERENCES: DesktopPreferences = {
   closeToTrayOnClose: false,
   launchAtStartup: false,
+  gpuAccelerationEnabled: false,
 };
 
 const isBoolean = (value: unknown): value is boolean => {
@@ -41,6 +43,9 @@ export class DesktopPreferencesStore {
       launchAtStartup: isBoolean(patch.launchAtStartup)
         ? patch.launchAtStartup
         : this.preferences.launchAtStartup,
+      gpuAccelerationEnabled: isBoolean(patch.gpuAccelerationEnabled)
+        ? patch.gpuAccelerationEnabled
+        : this.preferences.gpuAccelerationEnabled,
     };
 
     this.preferences = next;
@@ -63,6 +68,9 @@ export class DesktopPreferencesStore {
         launchAtStartup: isBoolean(parsed.launchAtStartup)
           ? parsed.launchAtStartup
           : DEFAULT_PREFERENCES.launchAtStartup,
+        gpuAccelerationEnabled: isBoolean(parsed.gpuAccelerationEnabled)
+          ? parsed.gpuAccelerationEnabled
+          : DEFAULT_PREFERENCES.gpuAccelerationEnabled,
       };
     } catch {
       this.preferences = { ...DEFAULT_PREFERENCES };

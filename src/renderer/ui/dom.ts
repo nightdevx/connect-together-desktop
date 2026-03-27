@@ -125,6 +125,8 @@ export interface DomRefs {
   logoutButton: HTMLButtonElement;
   closeToTrayToggle: HTMLButtonElement;
   launchAtStartupToggle: HTMLButtonElement;
+  gpuAccelerationToggle: HTMLButtonElement;
+  gpuRestartButton: HTMLButtonElement;
   settingsUpdateSummary: HTMLElement;
   settingsUpdateMeta: HTMLElement;
   settingsUpdateCheckButton: HTMLButtonElement;
@@ -328,6 +330,10 @@ export const queryDomRefs = (): DomRefs => {
     launchAtStartupToggle: requireElement<HTMLButtonElement>(
       "launchAtStartupToggle",
     ),
+    gpuAccelerationToggle: requireElement<HTMLButtonElement>(
+      "gpuAccelerationToggle",
+    ),
+    gpuRestartButton: requireElement<HTMLButtonElement>("gpuRestartButton"),
     settingsUpdateSummary: requireElement("settingsUpdateSummary"),
     settingsUpdateMeta: requireElement("settingsUpdateMeta"),
     settingsUpdateCheckButton: requireElement<HTMLButtonElement>(
