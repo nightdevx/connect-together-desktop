@@ -43,8 +43,13 @@ const CAMERA_FPS_STORAGE_KEY = "ct.desktop.camera-share-fps";
 const SCREEN_RESOLUTION_STORAGE_KEY = "ct.desktop.screen-share-resolution";
 const SCREEN_FPS_STORAGE_KEY = "ct.desktop.screen-share-fps";
 const SCREEN_MODE_STORAGE_KEY = "ct.desktop.screen-share-mode";
+const INPUT_GAIN_STORAGE_KEY = "ct.desktop.input-gain-percent";
+const MEDIA_DEBUG_LOG_STORAGE_KEY = "ct.desktop.media-debug-log";
 const PARTICIPANT_AUDIO_SETTINGS_STORAGE_KEY =
   "ct.desktop.participant-audio-settings";
+const MAX_MEDIA_DEBUG_LOG_ENTRIES = 280;
+const MAX_TOAST_COUNT = 4;
+const TOAST_AUTO_HIDE_MS = 4200;
 const DEFAULT_SPEAKING_THRESHOLD_PERCENT = 24;
 const FRIENDS_PRESENCE_REFRESH_MS = 2000;
 const USER_DIRECTORY_REFRESH_MS = 5000;
@@ -63,6 +68,15 @@ interface CaptureSourceItem {
 interface ParticipantAudioSetting {
   muted: boolean;
   volumePercent: number;
+}
+
+interface MediaDebugLogEntry {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  scope: "audio" | "camera" | "screen" | "livekit" | "system";
+  event: string;
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 const parseResolution = (value: string): { width: number; height: number } => {
@@ -105,6 +119,14 @@ const clampThresholdPercent = (value: number): number => {
 };
 
 const clampParticipantVolumePercent = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
+  return Math.max(0, Math.min(200, Math.round(value)));
+};
+
+const clampInputGainPercent = (value: number): number => {
   if (!Number.isFinite(value)) {
     return 100;
   }
@@ -162,6 +184,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let gpuAccelerationEnabled = false;
   let cameraResolution = "1280x720";
   let cameraFps = "30";
+  let inputGainPercent = 100;
   let screenResolution = "1920x1080";
   let screenFps = "30";
   let screenShareMode: ScreenCaptureKind = "any";
@@ -170,6 +193,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let screenTestStream: MediaStream | null = null;
   let screenCaptureSources: CaptureSourceItem[] = [];
   let selectedScreenCaptureSourceId: string | null = null;
+  let mediaDebugLogEntries: MediaDebugLogEntry[] = [];
   let participantAudioSettings = new Map<string, ParticipantAudioSetting>();
   let participantAudioMenuUserId: string | null = null;
   let latestDesktopUpdateState: DesktopUpdateState | null = null;
@@ -199,6 +223,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     cameraResolution =
       localStorage.getItem(CAMERA_RESOLUTION_STORAGE_KEY) ?? "1280x720";
     cameraFps = localStorage.getItem(CAMERA_FPS_STORAGE_KEY) ?? "30";
+    inputGainPercent = clampInputGainPercent(
+      Number(localStorage.getItem(INPUT_GAIN_STORAGE_KEY) ?? "100"),
+    );
     screenResolution =
       localStorage.getItem(SCREEN_RESOLUTION_STORAGE_KEY) ?? "1920x1080";
     screenFps = localStorage.getItem(SCREEN_FPS_STORAGE_KEY) ?? "30";
@@ -227,6 +254,38 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         });
       }
     }
+
+    const rawMediaDebugLog = localStorage.getItem(MEDIA_DEBUG_LOG_STORAGE_KEY);
+    if (rawMediaDebugLog) {
+      const parsed = JSON.parse(rawMediaDebugLog) as Array<
+        Partial<MediaDebugLogEntry>
+      >;
+
+      mediaDebugLogEntries = parsed
+        .filter((entry) => {
+          return (
+            typeof entry?.timestamp === "string" &&
+            typeof entry?.level === "string" &&
+            typeof entry?.scope === "string" &&
+            typeof entry?.event === "string" &&
+            typeof entry?.message === "string"
+          );
+        })
+        .map((entry) => ({
+          timestamp: entry.timestamp as string,
+          level: entry.level as "info" | "warn" | "error",
+          scope: entry.scope as
+            | "audio"
+            | "camera"
+            | "screen"
+            | "livekit"
+            | "system",
+          event: entry.event as string,
+          message: entry.message as string,
+          ...(entry.details ? { details: entry.details } : {}),
+        }))
+        .slice(-MAX_MEDIA_DEBUG_LOG_ENTRIES);
+    }
   } catch {
     uiSoundsEnabled = true;
     rnnoiseEnabled = true;
@@ -235,17 +294,113 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     effectiveSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
     cameraResolution = "1280x720";
     cameraFps = "30";
+    inputGainPercent = 100;
     screenResolution = "1920x1080";
     screenFps = "30";
     screenShareMode = "any";
+    mediaDebugLogEntries = [];
     participantAudioSettings = new Map<string, ParticipantAudioSetting>();
   }
 
   uiSoundController.setEnabled(uiSoundsEnabled);
 
+  let toastSequence = 0;
+  let lastToastMessage = "";
+  let lastToastAt = 0;
+
+  const shouldShowToast = (message: string, isError: boolean): boolean => {
+    if (isError) {
+      return true;
+    }
+
+    const mutedInfoPatterns = [
+      /Lobiye bir üye katıldı/i,
+      /Bir üye lobiden ayrıldı/i,
+      /Lobi güncellemeleri websocket üzerinden alınıyor/i,
+    ];
+
+    if (mutedInfoPatterns.some((pattern) => pattern.test(message))) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (lastToastMessage === message && now - lastToastAt < 2500) {
+      return false;
+    }
+
+    lastToastMessage = message;
+    lastToastAt = now;
+    return true;
+  };
+
+  const dismissToast = (toastElement: HTMLElement): void => {
+    toastElement.classList.remove("visible");
+    window.setTimeout(() => {
+      toastElement.remove();
+    }, 220);
+  };
+
+  const showToast = (
+    message: string,
+    tone: "info" | "error",
+    autoDismissMs = TOAST_AUTO_HIDE_MS,
+  ): void => {
+    const toastElement = document.createElement("article");
+    toastElement.className = `app-toast app-toast--${tone}`;
+    toastElement.dataset.toastId = `${++toastSequence}`;
+
+    const messageElement = document.createElement("p");
+    messageElement.className = "app-toast-message";
+    messageElement.textContent = message;
+
+    const closeButton = document.createElement("button");
+    closeButton.className = "app-toast-close";
+    closeButton.type = "button";
+    closeButton.setAttribute("aria-label", "Bildirimi kapat");
+    closeButton.textContent = "Kapat";
+    closeButton.addEventListener("click", () => {
+      dismissToast(toastElement);
+    });
+
+    toastElement.appendChild(messageElement);
+    toastElement.appendChild(closeButton);
+    dom.toastContainer.appendChild(toastElement);
+
+    const overflowToasts =
+      dom.toastContainer.querySelectorAll<HTMLElement>(".app-toast");
+    if (overflowToasts.length > MAX_TOAST_COUNT) {
+      const removeCount = overflowToasts.length - MAX_TOAST_COUNT;
+      for (let index = 0; index < removeCount; index += 1) {
+        overflowToasts[index]?.remove();
+      }
+    }
+
+    requestAnimationFrame(() => {
+      toastElement.classList.add("visible");
+    });
+
+    window.setTimeout(() => {
+      dismissToast(toastElement);
+    }, autoDismissMs);
+  };
+
   const setStatus = (message: string, isError: boolean): void => {
-    dom.status.textContent = message;
-    dom.status.dataset.tone = isError ? "error" : "ok";
+    const normalized = message.trim();
+    if (!normalized) {
+      return;
+    }
+
+    if (isError) {
+      console.error(`[status] ${normalized}`);
+    } else {
+      console.info(`[status] ${normalized}`);
+    }
+
+    if (!shouldShowToast(normalized, isError)) {
+      return;
+    }
+
+    showToast(normalized, isError ? "error" : "info", isError ? 6200 : 3800);
   };
 
   const shouldApplyLobbyRevision = (revision?: number): boolean => {
@@ -404,6 +559,84 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.voiceState.style.color = isError ? "#ffaaaa" : "#93a8be";
   };
 
+  const persistMediaDebugLogs = (): void => {
+    try {
+      localStorage.setItem(
+        MEDIA_DEBUG_LOG_STORAGE_KEY,
+        JSON.stringify(mediaDebugLogEntries),
+      );
+    } catch {
+      // no-op
+    }
+  };
+
+  const stringifyMediaDebugDetails = (
+    details?: Record<string, unknown>,
+  ): string => {
+    if (!details) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(details);
+    } catch {
+      return "[detay serilestirilemedi]";
+    }
+  };
+
+  const formatMediaDebugEntry = (entry: MediaDebugLogEntry): string => {
+    const detailsText = stringifyMediaDebugDetails(entry.details);
+    const base = `[${entry.timestamp}] [${entry.level.toUpperCase()}] [${entry.scope}] ${entry.event} - ${entry.message}`;
+    return detailsText ? `${base}\n  details: ${detailsText}` : base;
+  };
+
+  const renderMediaDebugLogOutput = (): void => {
+    if (mediaDebugLogEntries.length === 0) {
+      dom.mediaDebugLogOutput.textContent =
+        "Henüz medya tanılama kaydı yok. Kamera veya ekran yayını başlattığında loglar burada görünecek.";
+      return;
+    }
+
+    dom.mediaDebugLogOutput.textContent = mediaDebugLogEntries
+      .map((entry) => formatMediaDebugEntry(entry))
+      .join("\n\n");
+  };
+
+  const appendMediaDebugLog = (entry: MediaDebugLogEntry): void => {
+    mediaDebugLogEntries.push(entry);
+    if (mediaDebugLogEntries.length > MAX_MEDIA_DEBUG_LOG_ENTRIES) {
+      mediaDebugLogEntries = mediaDebugLogEntries.slice(
+        mediaDebugLogEntries.length - MAX_MEDIA_DEBUG_LOG_ENTRIES,
+      );
+    }
+
+    renderMediaDebugLogOutput();
+    persistMediaDebugLogs();
+  };
+
+  const clearMediaDebugLogs = (): void => {
+    mediaDebugLogEntries = [];
+    renderMediaDebugLogOutput();
+    persistMediaDebugLogs();
+    setStatus("Medya tanılama logları temizlendi", false);
+  };
+
+  const copyMediaDebugLogs = async (): Promise<void> => {
+    const content =
+      mediaDebugLogEntries.length > 0
+        ? mediaDebugLogEntries
+            .map((entry) => formatMediaDebugEntry(entry))
+            .join("\n\n")
+        : "Medya logu bulunmuyor.";
+
+    try {
+      await navigator.clipboard.writeText(content);
+      setStatus("Medya tanılama logları panoya kopyalandı", false);
+    } catch {
+      setStatus("Medya logları kopyalanamadı", true);
+    }
+  };
+
   const setSettingsTab = (tab: SettingsTab): void => {
     activeSettingsTab = tab;
 
@@ -457,7 +690,24 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const updateOutputVolumeText = (value: number): void => {
-    dom.outputVolumeValue.textContent = `${value}%`;
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    dom.outputVolumeValue.textContent = `${clamped}%`;
+    dom.outputVolume.style.setProperty("--range-fill", `${clamped}%`);
+  };
+
+  const updateInputGainText = (value: number): void => {
+    const clamped = clampInputGainPercent(value);
+    dom.inputGainValue.textContent = `${clamped}%`;
+    dom.inputGain.style.setProperty("--range-fill", `${clamped / 2}%`);
+  };
+
+  const syncSwitchButton = (
+    button: HTMLButtonElement,
+    enabled: boolean,
+  ): void => {
+    button.classList.toggle("enabled", enabled);
+    button.setAttribute("aria-checked", enabled ? "true" : "false");
+    button.dataset.stateLabel = enabled ? "Açık" : "Kapalı";
   };
 
   const updateSpeakingThresholdUi = (): void => {
@@ -495,29 +745,17 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const updateUiSoundsToggle = (): void => {
-    dom.uiSoundsToggle.classList.toggle("enabled", uiSoundsEnabled);
-    dom.uiSoundsToggle.textContent = uiSoundsEnabled ? "Açık" : "Kapalı";
+    syncSwitchButton(dom.uiSoundsToggle, uiSoundsEnabled);
   };
 
   const updateRnnoiseToggle = (): void => {
-    dom.rnnoiseToggle.classList.toggle("enabled", rnnoiseEnabled);
-    dom.rnnoiseToggle.textContent = rnnoiseEnabled ? "Açık" : "Kapalı";
+    syncSwitchButton(dom.rnnoiseToggle, rnnoiseEnabled);
   };
 
   const updateDesktopPreferenceToggles = (): void => {
-    dom.closeToTrayToggle.classList.toggle("enabled", closeToTrayOnClose);
-    dom.closeToTrayToggle.textContent = closeToTrayOnClose ? "Açık" : "Kapalı";
-
-    dom.launchAtStartupToggle.classList.toggle("enabled", launchAtStartup);
-    dom.launchAtStartupToggle.textContent = launchAtStartup ? "Açık" : "Kapalı";
-
-    dom.gpuAccelerationToggle.classList.toggle(
-      "enabled",
-      gpuAccelerationEnabled,
-    );
-    dom.gpuAccelerationToggle.textContent = gpuAccelerationEnabled
-      ? "Açık"
-      : "Kapalı";
+    syncSwitchButton(dom.closeToTrayToggle, closeToTrayOnClose);
+    syncSwitchButton(dom.launchAtStartupToggle, launchAtStartup);
+    syncSwitchButton(dom.gpuAccelerationToggle, gpuAccelerationEnabled);
   };
 
   const persistUiSoundsPreference = (): void => {
@@ -534,6 +772,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         RNNOISE_ENABLED_STORAGE_KEY,
         rnnoiseEnabled ? "1" : "0",
       );
+    } catch {
+      // no-op
+    }
+  };
+
+  const persistInputGainPreference = (): void => {
+    try {
+      localStorage.setItem(INPUT_GAIN_STORAGE_KEY, `${inputGainPercent}`);
     } catch {
       // no-op
     }
@@ -610,14 +856,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     userId: string,
     setting: ParticipantAudioSetting,
   ): void => {
+    const normalizedVolume = clampParticipantVolumePercent(
+      setting.volumePercent,
+    );
     const displayName = lobbyController.resolveMemberName(userId);
     dom.participantAudioMenuTitle.textContent = `${displayName} ses ayarı`;
     dom.participantAudioMuteToggle.classList.toggle("active", setting.muted);
     dom.participantAudioMuteToggle.textContent = setting.muted
       ? "Susturmayı kaldır"
       : "Bu kullanıcıyı sustur";
-    dom.participantAudioVolumeSlider.value = `${clampParticipantVolumePercent(setting.volumePercent)}`;
-    dom.participantAudioVolumeValue.textContent = `${clampParticipantVolumePercent(setting.volumePercent)}%`;
+    dom.participantAudioVolumeSlider.value = `${normalizedVolume}`;
+    dom.participantAudioVolumeSlider.style.setProperty(
+      "--range-fill",
+      `${normalizedVolume / 2}%`,
+    );
+    dom.participantAudioVolumeValue.textContent = `${normalizedVolume}%`;
   };
 
   const closeParticipantAudioMenu = (): void => {
@@ -920,6 +1173,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom,
     rtcConfig: runtimeConfig.desktopRtcConfig as RTCConfiguration,
     initialRnnoiseEnabled: rnnoiseEnabled,
+    initialInputGainPercent: inputGainPercent,
     setStatus,
     setVoiceState,
     onLocalSpeakingChanged: (speaking) => {
@@ -966,6 +1220,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       }
 
       diagnosticsController.updateConnectionDiagnostics();
+    },
+    onMediaDebugLog: (entry) => {
+      appendMediaDebugLog(entry);
     },
   });
 
@@ -2274,6 +2531,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     void refreshScreenCaptureSources();
   });
 
+  dom.mediaDebugClearButton.addEventListener("click", () => {
+    clearMediaDebugLogs();
+  });
+
+  dom.mediaDebugCopyButton.addEventListener("click", () => {
+    void copyMediaDebugLogs();
+  });
+
   dom.screenCaptureTabMonitors.addEventListener("click", () => {
     setScreenCaptureTab("screen");
     screenShareMode = "screen";
@@ -2463,6 +2728,34 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     updateOutputVolumeText(value);
   });
 
+  dom.inputGain.addEventListener("input", () => {
+    inputGainPercent = clampInputGainPercent(
+      Number(dom.inputGain.value || "100"),
+    );
+    updateInputGainText(inputGainPercent);
+  });
+
+  dom.inputGain.addEventListener("change", () => {
+    inputGainPercent = clampInputGainPercent(
+      Number(dom.inputGain.value || "100"),
+    );
+    updateInputGainText(inputGainPercent);
+    persistInputGainPreference();
+    void voiceController
+      .setInputGain(inputGainPercent)
+      .then(() => {
+        setStatus(
+          `Mikrofon ses kazancı %${inputGainPercent} olarak ayarlandı`,
+          false,
+        );
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error ? error.message : "bilinmeyen hata";
+        setStatus(`Mikrofon ses kazancı ayarlanamadı: ${message}`, true);
+      });
+  });
+
   dom.speakingThresholdMode.addEventListener("change", () => {
     speakingDetectionMode = normalizeDetectionMode(
       dom.speakingThresholdMode.value,
@@ -2598,12 +2891,31 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   workspaceController.setSettingsTab(activeSettingsTab);
   diagnosticsController.initialize();
   applyShareSettingsUi();
+  appendMediaDebugLog({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    scope: "system",
+    event: "session-start",
+    message: "Medya tanılama oturumu başlatıldı",
+    details: {
+      gpuAccelerationEnabled,
+      cameraResolution,
+      cameraFps,
+      screenResolution,
+      screenFps,
+      screenShareMode,
+    },
+  });
+  renderMediaDebugLogOutput();
   setScreenModalOpen(false);
+  dom.inputGain.value = `${inputGainPercent}`;
   voiceController.setOutputVolume(Number(dom.outputVolume.value || "100"));
   voiceController.setOutputMuted(isHeadphoneMuted);
+  void voiceController.setInputGain(inputGainPercent);
   voiceController.setManualSpeakingThreshold(manualSpeakingThresholdPercent);
   voiceController.setSpeakingDetectionMode(speakingDetectionMode);
   updateOutputVolumeText(Number(dom.outputVolume.value || "100"));
+  updateInputGainText(inputGainPercent);
   updateSpeakingThresholdUi();
   updateMicInputLevelUi(0);
   updateQuickHeadphoneButton();

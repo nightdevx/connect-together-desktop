@@ -106,7 +106,14 @@ function buildDesktopRtcConfig(): DesktopRtcConfig {
     .filter((entry) => entry.length > 0);
 
   const normalizedUrls =
-    urls.length > 0 ? urls : ["stun:stun.l.google.com:19302"];
+    urls.length > 0
+      ? urls
+      : [
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:stun2.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+        ];
 
   const username = readEnv("CT_ICE_USERNAME", "DESKTOP_ICE_USERNAME");
   const credential = readEnv("CT_ICE_CREDENTIAL", "DESKTOP_ICE_CREDENTIAL");

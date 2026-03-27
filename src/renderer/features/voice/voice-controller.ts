@@ -15,6 +15,7 @@ import {
   getSupportedConstraintsSafe,
   getUserMediaSafe,
   stopMediaStream,
+  type VideoCaptureQuality,
 } from "./voice-media-utils";
 import { createRemoteMediaUiController } from "./voice-remote-media";
 import type {
@@ -28,10 +29,22 @@ interface LiveKitRemoteTrackMeta {
   sourceType: "microphone" | "camera" | "screen";
 }
 
+type MediaDebugLogLevel = "info" | "warn" | "error";
+
+interface MediaDebugLogPayload {
+  timestamp: string;
+  level: MediaDebugLogLevel;
+  scope: "audio" | "camera" | "screen" | "livekit" | "system";
+  event: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
 interface VoiceControllerDeps {
   dom: DomRefs;
   rtcConfig: RTCConfiguration;
   initialRnnoiseEnabled?: boolean;
+  initialInputGainPercent?: number;
   setStatus: (message: string, isError: boolean) => void;
   setVoiceState: (message: string, isError: boolean) => void;
   onLocalSpeakingChanged?: (speaking: boolean) => void;
@@ -53,6 +66,7 @@ interface VoiceControllerDeps {
     packetLossPercent: number;
     connected: boolean;
   }) => void;
+  onMediaDebugLog?: (payload: MediaDebugLogPayload) => void;
 }
 
 interface VoiceController {
@@ -71,6 +85,7 @@ interface VoiceController {
   setManualSpeakingThreshold: (percent: number) => void;
   setOutputVolume: (volumePercent: number) => void;
   setOutputMuted: (muted: boolean) => void;
+  setInputGain: (gainPercent: number) => Promise<void>;
   toggleMicTest: () => Promise<boolean>;
   handleIncomingSignal: (payload: RtcSignalPayload) => Promise<void>;
   onLobbyUpdated: () => Promise<void>;
@@ -119,9 +134,246 @@ const THRESHOLD_REPORT_INTERVAL_MS = 250;
 const INPUT_LEVEL_REPORT_INTERVAL_MS = 40;
 const LIVEKIT_METRICS_INTERVAL_MS = 3000;
 const LIVEKIT_PROBE_HISTORY_SIZE = 20;
+const INPUT_GAIN_MIN_PERCENT = 0;
+const INPUT_GAIN_MAX_PERCENT = 200;
+const CAMERA_CAPTURE_DEFAULT_QUALITY: VideoCaptureQuality = {
+  width: 1280,
+  height: 720,
+  fps: 30,
+};
+const SCREEN_CAPTURE_DEFAULT_QUALITY: VideoCaptureQuality = {
+  width: 1920,
+  height: 1080,
+  fps: 30,
+};
+const CAMERA_CAPTURE_MIN_QUALITY: VideoCaptureQuality = {
+  width: 640,
+  height: 360,
+  fps: 15,
+};
+const SCREEN_CAPTURE_MIN_QUALITY: VideoCaptureQuality = {
+  width: 960,
+  height: 540,
+  fps: 15,
+};
+const CAMERA_CAPTURE_MAX_QUALITY: VideoCaptureQuality = {
+  width: 1920,
+  height: 1080,
+  fps: 60,
+};
+const SCREEN_CAPTURE_MAX_QUALITY: VideoCaptureQuality = {
+  width: 2560,
+  height: 1440,
+  fps: 60,
+};
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.max(min, Math.min(max, value));
+};
+
+const toFiniteNumber = (value: number, fallback: number): number => {
+  return Number.isFinite(value) ? value : fallback;
+};
+
+const clampInputGainPercent = (value: number): number => {
+  return Math.round(
+    clamp(value, INPUT_GAIN_MIN_PERCENT, INPUT_GAIN_MAX_PERCENT),
+  );
+};
+
+const inputGainPercentToMultiplier = (value: number): number => {
+  return clampInputGainPercent(value) / 100;
+};
+
+const normalizeVideoQuality = (
+  quality: VideoCaptureQuality,
+  min: VideoCaptureQuality,
+  max: VideoCaptureQuality,
+  fallback: VideoCaptureQuality,
+): VideoCaptureQuality => {
+  const width = clamp(
+    Math.round(toFiniteNumber(quality.width, fallback.width)),
+    min.width,
+    max.width,
+  );
+  const height = clamp(
+    Math.round(toFiniteNumber(quality.height, fallback.height)),
+    min.height,
+    max.height,
+  );
+  const fps = clamp(
+    Math.round(toFiniteNumber(quality.fps, fallback.fps)),
+    min.fps,
+    max.fps,
+  );
+
+  return {
+    width,
+    height,
+    fps,
+  };
+};
+
+const buildUniqueQualityChain = (
+  candidates: VideoCaptureQuality[],
+): VideoCaptureQuality[] => {
+  const seen = new Set<string>();
+  return candidates.filter((quality) => {
+    const key = `${quality.width}x${quality.height}@${quality.fps}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+};
+
+const buildCameraQualityFallbackChain = (
+  requested: VideoCaptureQuality,
+): VideoCaptureQuality[] => {
+  const normalizedRequested = normalizeVideoQuality(
+    requested,
+    CAMERA_CAPTURE_MIN_QUALITY,
+    CAMERA_CAPTURE_MAX_QUALITY,
+    CAMERA_CAPTURE_DEFAULT_QUALITY,
+  );
+
+  return buildUniqueQualityChain([
+    normalizedRequested,
+    { width: 1920, height: 1080, fps: 30 },
+    { width: 1280, height: 720, fps: 30 },
+    { width: 960, height: 540, fps: 24 },
+    { width: 640, height: 360, fps: 20 },
+  ]);
+};
+
+const buildScreenQualityFallbackChain = (
+  requested: VideoCaptureQuality,
+): VideoCaptureQuality[] => {
+  const normalizedRequested = normalizeVideoQuality(
+    requested,
+    SCREEN_CAPTURE_MIN_QUALITY,
+    SCREEN_CAPTURE_MAX_QUALITY,
+    SCREEN_CAPTURE_DEFAULT_QUALITY,
+  );
+
+  return buildUniqueQualityChain([
+    normalizedRequested,
+    { width: 2560, height: 1440, fps: 30 },
+    { width: 1920, height: 1080, fps: 30 },
+    { width: 1600, height: 900, fps: 24 },
+    { width: 1280, height: 720, fps: 20 },
+  ]);
+};
+
+const formatQualityLabel = (quality: VideoCaptureQuality): string => {
+  return `${quality.width}x${quality.height} @ ${quality.fps}fps`;
+};
+
+const isWindowCaptureSource = (sourceId?: string): boolean => {
+  return sourceId?.startsWith("window:") === true;
+};
+
+const applyScreenSourceStabilityCaps = (
+  requestedQuality: VideoCaptureQuality,
+  sourceId?: string,
+): { quality: VideoCaptureQuality; capped: boolean } => {
+  if (!isWindowCaptureSource(sourceId)) {
+    return {
+      quality: requestedQuality,
+      capped: false,
+    };
+  }
+
+  const cappedQuality: VideoCaptureQuality = {
+    width: Math.min(requestedQuality.width, 1920),
+    height: Math.min(requestedQuality.height, 1080),
+    fps: Math.min(requestedQuality.fps, 30),
+  };
+
+  const capped =
+    cappedQuality.width !== requestedQuality.width ||
+    cappedQuality.height !== requestedQuality.height ||
+    cappedQuality.fps !== requestedQuality.fps;
+
+  return {
+    quality: cappedQuality,
+    capped,
+  };
+};
+
+const applyTrackContentHint = (
+  track: MediaStreamTrack | undefined,
+  hint: "motion" | "detail",
+): void => {
+  if (!track) {
+    return;
+  }
+
+  try {
+    track.contentHint = hint;
+  } catch {
+    // no-op
+  }
+};
+
+const getTrackSettingsSize = (
+  track: MediaStreamTrack,
+): { width: number; height: number; fps: number } => {
+  const settings = track.getSettings();
+  const width = Math.max(
+    640,
+    Math.round(toFiniteNumber(settings.width ?? 1280, 1280)),
+  );
+  const height = Math.max(
+    360,
+    Math.round(toFiniteNumber(settings.height ?? 720, 720)),
+  );
+  const fps = Math.max(
+    15,
+    Math.round(toFiniteNumber(settings.frameRate ?? 30, 30)),
+  );
+
+  return {
+    width,
+    height,
+    fps,
+  };
+};
+
+const resolveCameraMaxBitrate = (track: MediaStreamTrack): number => {
+  const settings = getTrackSettingsSize(track);
+  const complexity = settings.width * settings.height * settings.fps;
+
+  if (complexity >= 1920 * 1080 * 50) {
+    return 4_500_000;
+  }
+  if (complexity >= 1920 * 1080 * 30) {
+    return 3_200_000;
+  }
+  if (complexity >= 1280 * 720 * 30) {
+    return 2_200_000;
+  }
+
+  return 1_000_000;
+};
+
+const resolveScreenMaxBitrate = (track: MediaStreamTrack): number => {
+  const settings = getTrackSettingsSize(track);
+  const complexity = settings.width * settings.height * settings.fps;
+
+  if (complexity >= 2560 * 1440 * 45) {
+    return 8_000_000;
+  }
+  if (complexity >= 2560 * 1440 * 30) {
+    return 6_500_000;
+  }
+  if (complexity >= 1920 * 1080 * 30) {
+    return 4_500_000;
+  }
+
+  return 2_500_000;
 };
 
 const manualPercentToThreshold = (percent: number): number => {
@@ -142,6 +394,14 @@ const thresholdToManualPercent = (threshold: number): number => {
 
 const getErrorMessage = (error?: { message?: string }): string => {
   return error?.message ?? "bilinmeyen hata";
+};
+
+const getUnknownErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "bilinmeyen hata";
 };
 
 export const createVoiceController = (
@@ -166,7 +426,12 @@ export const createVoiceController = (
   let rnnoiseHighPassNode: BiquadFilterNode | null = null;
   let rnnoiseNode: RnnoiseWorkletNode | null = null;
   let rnnoiseCompressorNode: DynamicsCompressorNode | null = null;
+  let rnnoiseInputGainNode: GainNode | null = null;
   let rnnoiseDestinationNode: MediaStreamAudioDestinationNode | null = null;
+
+  let inputGainPercent = clampInputGainPercent(
+    deps.initialInputGainPercent ?? 100,
+  );
 
   let localLiveKitAudioTrack: MediaStreamTrack | null = null;
   let localLiveKitAudioPublication: any | null = null;
@@ -222,6 +487,44 @@ export const createVoiceController = (
   let lastThresholdReportPercent = -1;
   let lastInputLevelReportAt = 0;
   let lastInputLevelPercent = -1;
+
+  const emitMediaDebugLog = (
+    level: MediaDebugLogLevel,
+    scope: MediaDebugLogPayload["scope"],
+    event: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    const payload: MediaDebugLogPayload = {
+      timestamp: new Date().toISOString(),
+      level,
+      scope,
+      event,
+      message,
+      ...(details ? { details } : {}),
+    };
+
+    deps.onMediaDebugLog?.(payload);
+
+    const logData = {
+      scope,
+      event,
+      message,
+      ...(details ? { details } : {}),
+    };
+
+    if (level === "error") {
+      console.error("[media-debug]", logData);
+      return;
+    }
+
+    if (level === "warn") {
+      console.warn("[media-debug]", logData);
+      return;
+    }
+
+    console.info("[media-debug]", logData);
+  };
 
   const reportEffectiveThreshold = (force = false): void => {
     const now = performance.now();
@@ -503,6 +806,26 @@ export const createVoiceController = (
     }
   };
 
+  const applyInputGainNodeValue = (): void => {
+    if (!rnnoiseInputGainNode || !rnnoiseAudioContext) {
+      return;
+    }
+
+    const multiplier = inputGainPercentToMultiplier(inputGainPercent);
+    try {
+      rnnoiseInputGainNode.gain.cancelScheduledValues(
+        rnnoiseAudioContext.currentTime,
+      );
+      rnnoiseInputGainNode.gain.setTargetAtTime(
+        multiplier,
+        rnnoiseAudioContext.currentTime,
+        0.018,
+      );
+    } catch {
+      rnnoiseInputGainNode.gain.value = multiplier;
+    }
+  };
+
   const destroyRnnoisePipeline = (): void => {
     try {
       rnnoiseSourceNode?.disconnect();
@@ -528,6 +851,12 @@ export const createVoiceController = (
       // no-op
     }
 
+    try {
+      rnnoiseInputGainNode?.disconnect();
+    } catch {
+      // no-op
+    }
+
     if (rnnoiseAudioContext) {
       void rnnoiseAudioContext.close().catch(() => {
         // no-op
@@ -538,6 +867,7 @@ export const createVoiceController = (
     rnnoiseHighPassNode = null;
     rnnoiseNode = null;
     rnnoiseCompressorNode = null;
+    rnnoiseInputGainNode = null;
     rnnoiseDestinationNode = null;
     rnnoiseAudioContext = null;
   };
@@ -545,7 +875,7 @@ export const createVoiceController = (
   const createProcessedAudioStream = async (
     capturedStream: MediaStream,
   ): Promise<MediaStream> => {
-    if (!rnnoiseEnabled) {
+    if (!rnnoiseEnabled && inputGainPercent === 100) {
       return capturedStream;
     }
 
@@ -564,42 +894,54 @@ export const createVoiceController = (
     });
 
     try {
-      await context.audioWorklet.addModule(rnnoiseWorkletPath);
-      if (!rnnoiseWasmBinary) {
-        rnnoiseWasmBinary = await loadRnnoise({
-          url: rnnoiseWasmPath,
-          simdUrl: rnnoiseSimdWasmPath,
-        });
-      }
-      const wasmBinary = rnnoiseWasmBinary;
-      if (!wasmBinary) {
-        throw new Error("RNNoise modeli yüklenemedi");
-      }
-
       const source = context.createMediaStreamSource(capturedStream);
-      const highPass = context.createBiquadFilter();
-      highPass.type = "highpass";
-      highPass.frequency.value = AUDIO_HIGH_PASS_HZ;
-      highPass.Q.value = 0.707;
-
-      const rnnoise = new RnnoiseWorkletNode(context, {
-        maxChannels: 1,
-        wasmBinary: wasmBinary.slice(0),
-      });
-
-      const compressor = context.createDynamicsCompressor();
-      compressor.threshold.value = AUDIO_COMPRESSOR_THRESHOLD_DB;
-      compressor.knee.value = AUDIO_COMPRESSOR_KNEE_DB;
-      compressor.ratio.value = AUDIO_COMPRESSOR_RATIO;
-      compressor.attack.value = AUDIO_COMPRESSOR_ATTACK_SECONDS;
-      compressor.release.value = AUDIO_COMPRESSOR_RELEASE_SECONDS;
+      const gainNode = context.createGain();
+      gainNode.gain.value = inputGainPercentToMultiplier(inputGainPercent);
 
       const destination = context.createMediaStreamDestination();
+      let highPass: BiquadFilterNode | null = null;
+      let rnnoise: RnnoiseWorkletNode | null = null;
+      let compressor: DynamicsCompressorNode | null = null;
 
-      source.connect(highPass);
-      highPass.connect(rnnoise);
-      rnnoise.connect(compressor);
-      compressor.connect(destination);
+      if (rnnoiseEnabled) {
+        await context.audioWorklet.addModule(rnnoiseWorkletPath);
+        if (!rnnoiseWasmBinary) {
+          rnnoiseWasmBinary = await loadRnnoise({
+            url: rnnoiseWasmPath,
+            simdUrl: rnnoiseSimdWasmPath,
+          });
+        }
+        const wasmBinary = rnnoiseWasmBinary;
+        if (!wasmBinary) {
+          throw new Error("RNNoise modeli yüklenemedi");
+        }
+
+        highPass = context.createBiquadFilter();
+        highPass.type = "highpass";
+        highPass.frequency.value = AUDIO_HIGH_PASS_HZ;
+        highPass.Q.value = 0.707;
+
+        rnnoise = new RnnoiseWorkletNode(context, {
+          maxChannels: 1,
+          wasmBinary: wasmBinary.slice(0),
+        });
+
+        compressor = context.createDynamicsCompressor();
+        compressor.threshold.value = AUDIO_COMPRESSOR_THRESHOLD_DB;
+        compressor.knee.value = AUDIO_COMPRESSOR_KNEE_DB;
+        compressor.ratio.value = AUDIO_COMPRESSOR_RATIO;
+        compressor.attack.value = AUDIO_COMPRESSOR_ATTACK_SECONDS;
+        compressor.release.value = AUDIO_COMPRESSOR_RELEASE_SECONDS;
+
+        source.connect(highPass);
+        highPass.connect(rnnoise);
+        rnnoise.connect(compressor);
+        compressor.connect(gainNode);
+      } else {
+        source.connect(gainNode);
+      }
+
+      gainNode.connect(destination);
 
       if (context.state === "suspended") {
         await context.resume().catch(() => {
@@ -617,6 +959,7 @@ export const createVoiceController = (
       rnnoiseHighPassNode = highPass;
       rnnoiseNode = rnnoise;
       rnnoiseCompressorNode = compressor;
+      rnnoiseInputGainNode = gainNode;
       rnnoiseDestinationNode = destination;
 
       return new MediaStream([processedTrack]);
@@ -757,37 +1100,344 @@ export const createVoiceController = (
   const createCameraCaptureStream = async (
     options?: CameraShareOptions,
   ): Promise<MediaStream> => {
-    const quality = options?.quality ?? { width: 1280, height: 720, fps: 30 };
-    return getUserMediaSafe({
-      video: {
-        width: { ideal: quality.width, max: quality.width },
-        height: { ideal: quality.height, max: quality.height },
-        frameRate: { ideal: quality.fps, max: quality.fps },
+    const requestedQuality = options?.quality ?? CAMERA_CAPTURE_DEFAULT_QUALITY;
+    const qualityChain = buildCameraQualityFallbackChain(requestedQuality);
+
+    emitMediaDebugLog(
+      "info",
+      "camera",
+      "capture-start",
+      "Kamera yakalama başlatıldı",
+      {
+        requestedQuality,
+        qualityChain: qualityChain.map(formatQualityLabel),
       },
-      audio: false,
-    });
+    );
+
+    let lastError: unknown = null;
+    for (const [index, quality] of qualityChain.entries()) {
+      emitMediaDebugLog(
+        "info",
+        "camera",
+        "capture-attempt",
+        "Kamera yakalama profili deneniyor",
+        {
+          attempt: index + 1,
+          quality,
+        },
+      );
+
+      try {
+        const stream = await getUserMediaSafe({
+          video: {
+            width: {
+              ideal: quality.width,
+              max: quality.width,
+              min: CAMERA_CAPTURE_MIN_QUALITY.width,
+            },
+            height: {
+              ideal: quality.height,
+              max: quality.height,
+              min: CAMERA_CAPTURE_MIN_QUALITY.height,
+            },
+            frameRate: {
+              ideal: quality.fps,
+              max: quality.fps,
+              min: CAMERA_CAPTURE_MIN_QUALITY.fps,
+            },
+          },
+          audio: false,
+        });
+
+        const videoTrack = stream.getVideoTracks()[0];
+        applyTrackContentHint(videoTrack, "motion");
+
+        const actualQuality = videoTrack
+          ? getTrackSettingsSize(videoTrack)
+          : undefined;
+        emitMediaDebugLog(
+          index > 0 ? "warn" : "info",
+          "camera",
+          "capture-success",
+          "Kamera yakalama başarılı",
+          {
+            attempt: index + 1,
+            requestedQuality: quality,
+            actualQuality,
+            fallbackApplied: index > 0,
+          },
+        );
+
+        if (index > 0) {
+          deps.setVoiceState(
+            `Kamera stabil kalite profiline alındı (${formatQualityLabel(quality)})`,
+            false,
+          );
+        }
+
+        return stream;
+      } catch (error) {
+        lastError = error;
+        emitMediaDebugLog(
+          "warn",
+          "camera",
+          "capture-attempt-failed",
+          "Kamera yakalama denemesi başarısız",
+          {
+            attempt: index + 1,
+            quality,
+            error: getUnknownErrorMessage(error),
+          },
+        );
+      }
+    }
+
+    const message =
+      lastError instanceof Error ? lastError.message : "bilinmeyen hata";
+    emitMediaDebugLog(
+      "error",
+      "camera",
+      "capture-failed",
+      "Kamera yakalama tüm profillerde başarısız oldu",
+      {
+        requestedQuality,
+        qualityChain: qualityChain.map(formatQualityLabel),
+        error: message,
+      },
+    );
+
+    throw new Error(
+      `Kamera başlatılamadı (${message}). Çözünürlük/FPS düşürüp tekrar deneyin.`,
+    );
   };
 
   const createScreenCaptureStream = async (
     options?: ScreenShareOptions,
   ): Promise<MediaStream> => {
-    const quality = options?.quality ?? { width: 1920, height: 1080, fps: 30 };
+    const requestedQuality = options?.quality ?? SCREEN_CAPTURE_DEFAULT_QUALITY;
+    const sourceId = options?.sourceId;
+    const sourceType = isWindowCaptureSource(sourceId) ? "window" : "screen";
+    const stabilized = applyScreenSourceStabilityCaps(
+      requestedQuality,
+      sourceId,
+    );
+    const effectiveRequestedQuality = stabilized.quality;
+    const qualityChain = buildScreenQualityFallbackChain(
+      effectiveRequestedQuality,
+    );
 
-    if (options?.sourceId) {
-      return getDesktopSourceMediaSafe({
-        sourceId: options.sourceId,
-        quality,
-      });
+    if (stabilized.capped) {
+      emitMediaDebugLog(
+        "warn",
+        "screen",
+        "quality-capped",
+        "Pencere yakalama için stabilite amaçlı kalite profili düşürüldü",
+        {
+          sourceId: sourceId ?? null,
+          sourceType,
+          requestedQuality,
+          appliedQuality: effectiveRequestedQuality,
+        },
+      );
+
+      deps.setVoiceState(
+        `Pencere paylaşımı için stabil profil uygulandı (${formatQualityLabel(effectiveRequestedQuality)})`,
+        false,
+      );
     }
 
-    return getDisplayMediaSafe({
-      video: {
-        width: { ideal: quality.width, max: quality.width },
-        height: { ideal: quality.height, max: quality.height },
-        frameRate: { ideal: quality.fps, max: quality.fps },
+    emitMediaDebugLog(
+      "info",
+      "screen",
+      "capture-start",
+      "Ekran yakalama başlatıldı",
+      {
+        sourceMode: sourceId ? "desktop-source" : "display-media",
+        sourceType,
+        hasSourceId: Boolean(sourceId),
+        requestedQuality,
+        effectiveRequestedQuality,
+        qualityChain: qualityChain.map(formatQualityLabel),
       },
-      audio: false,
-    });
+    );
+
+    if (sourceId) {
+      let lastError: unknown = null;
+      for (const [index, quality] of qualityChain.entries()) {
+        emitMediaDebugLog(
+          "info",
+          "screen",
+          "capture-attempt",
+          "Ekran kaynağı yakalama profili deneniyor",
+          {
+            attempt: index + 1,
+            sourceId,
+            sourceType,
+            quality,
+          },
+        );
+
+        try {
+          const stream = await getDesktopSourceMediaSafe({
+            sourceId,
+            quality,
+          });
+
+          const videoTrack = stream.getVideoTracks()[0];
+          applyTrackContentHint(videoTrack, "detail");
+
+          const actualQuality = videoTrack
+            ? getTrackSettingsSize(videoTrack)
+            : undefined;
+          emitMediaDebugLog(
+            index > 0 ? "warn" : "info",
+            "screen",
+            "capture-success",
+            "Ekran kaynağı yakalama başarılı",
+            {
+              attempt: index + 1,
+              sourceId,
+              sourceType,
+              requestedQuality: quality,
+              actualQuality,
+              fallbackApplied: index > 0,
+            },
+          );
+
+          if (index > 0) {
+            deps.setVoiceState(
+              `Ekran paylaşımı stabil kalite profiline alındı (${formatQualityLabel(quality)})`,
+              false,
+            );
+          }
+
+          return stream;
+        } catch (error) {
+          lastError = error;
+          emitMediaDebugLog(
+            "warn",
+            "screen",
+            "capture-attempt-failed",
+            "Ekran kaynağı yakalama denemesi başarısız",
+            {
+              attempt: index + 1,
+              sourceId,
+              sourceType,
+              quality,
+              error: getUnknownErrorMessage(error),
+            },
+          );
+        }
+      }
+
+      const message =
+        lastError instanceof Error ? lastError.message : "bilinmeyen hata";
+      emitMediaDebugLog(
+        "error",
+        "screen",
+        "capture-failed",
+        "Ekran kaynağı yakalama tüm profillerde başarısız oldu",
+        {
+          sourceId,
+          sourceType,
+          requestedQuality: effectiveRequestedQuality,
+          qualityChain: qualityChain.map(formatQualityLabel),
+          error: message,
+        },
+      );
+
+      throw new Error(
+        `Ekran yakalama başlatılamadı (${message}). Çözünürlük/FPS düşürüp tekrar deneyin.`,
+      );
+    }
+
+    let lastError: unknown = null;
+    for (const [index, quality] of qualityChain.entries()) {
+      emitMediaDebugLog(
+        "info",
+        "screen",
+        "capture-attempt",
+        "DisplayMedia yakalama profili deneniyor",
+        {
+          attempt: index + 1,
+          sourceType,
+          quality,
+        },
+      );
+
+      try {
+        const stream = await getDisplayMediaSafe({
+          video: {
+            width: { ideal: quality.width, max: quality.width },
+            height: { ideal: quality.height, max: quality.height },
+            frameRate: { ideal: quality.fps, max: quality.fps },
+          },
+          audio: false,
+        });
+
+        const videoTrack = stream.getVideoTracks()[0];
+        applyTrackContentHint(videoTrack, "detail");
+
+        const actualQuality = videoTrack
+          ? getTrackSettingsSize(videoTrack)
+          : undefined;
+        emitMediaDebugLog(
+          index > 0 ? "warn" : "info",
+          "screen",
+          "capture-success",
+          "DisplayMedia yakalama başarılı",
+          {
+            attempt: index + 1,
+            requestedQuality: quality,
+            sourceType,
+            actualQuality,
+            fallbackApplied: index > 0,
+          },
+        );
+
+        if (index > 0) {
+          deps.setVoiceState(
+            `Ekran paylaşımı stabil kalite profiline alındı (${formatQualityLabel(quality)})`,
+            false,
+          );
+        }
+
+        return stream;
+      } catch (error) {
+        lastError = error;
+        emitMediaDebugLog(
+          "warn",
+          "screen",
+          "capture-attempt-failed",
+          "DisplayMedia yakalama denemesi başarısız",
+          {
+            attempt: index + 1,
+            sourceType,
+            quality,
+            error: getUnknownErrorMessage(error),
+          },
+        );
+      }
+    }
+
+    const message =
+      lastError instanceof Error ? lastError.message : "bilinmeyen hata";
+    emitMediaDebugLog(
+      "error",
+      "screen",
+      "capture-failed",
+      "DisplayMedia yakalama tüm profillerde başarısız oldu",
+      {
+        requestedQuality: effectiveRequestedQuality,
+        sourceType,
+        qualityChain: qualityChain.map(formatQualityLabel),
+        error: message,
+      },
+    );
+
+    throw new Error(
+      `Ekran paylaşımı başlatılamadı (${message}). Çözünürlük/FPS düşürüp tekrar deneyin.`,
+    );
   };
 
   const clearHeartbeatAndMetricsForUi = (): void => {
@@ -1230,6 +1880,16 @@ export const createVoiceController = (
   };
 
   const stopLiveKitCameraShare = (): void => {
+    emitMediaDebugLog(
+      "info",
+      "camera",
+      "publish-stopped",
+      "Kamera yayını durduruldu",
+      {
+        hadPublication: Boolean(localLiveKitCameraPublication),
+      },
+    );
+
     unpublishLiveKitPublication(localLiveKitCameraPublication);
     localLiveKitCameraPublication = null;
 
@@ -1241,6 +1901,16 @@ export const createVoiceController = (
   };
 
   const stopLiveKitScreenShare = (): void => {
+    emitMediaDebugLog(
+      "info",
+      "screen",
+      "publish-stopped",
+      "Ekran yayını durduruldu",
+      {
+        hadPublication: Boolean(localLiveKitScreenPublication),
+      },
+    );
+
     stopMediaStream(localLiveKitScreenStream);
 
     try {
@@ -1284,6 +1954,24 @@ export const createVoiceController = (
       },
     );
 
+    emitMediaDebugLog(
+      "info",
+      "audio",
+      "publish-microphone",
+      "Mikrofon LiveKit'e yayınlandı",
+      {
+        trackId: track.id,
+        publicationSid:
+          String(
+            localLiveKitAudioPublication?.trackSid ??
+              localLiveKitAudioPublication?.sid ??
+              "",
+          ) || null,
+        enabled: localLiveKitAudioTrack.enabled,
+        settings: track.getSettings(),
+      },
+    );
+
     emitLiveKitLobbySnapshot();
   };
 
@@ -1299,10 +1987,32 @@ export const createVoiceController = (
       throw new Error(getErrorMessage(tokenResult.error));
     }
 
+    emitMediaDebugLog(
+      "info",
+      "livekit",
+      "connect-start",
+      "LiveKit bağlantısı başlatılıyor",
+      {
+        room: deps.getLiveKitDefaultRoom(),
+        serverUrl: tokenResult.data.serverUrl,
+        iceServerCount: Array.isArray(deps.rtcConfig.iceServers)
+          ? deps.rtcConfig.iceServers.length
+          : 0,
+        hasCustomIceTransportPolicy: Boolean(deps.rtcConfig.iceTransportPolicy),
+      },
+    );
+
     const sdk = await ensureLiveKitSdk();
     const room = new sdk.Room({
       adaptiveStream: true,
       dynacast: true,
+      rtcConfig: deps.rtcConfig,
+      stopLocalTrackOnUnpublish: true,
+      publishDefaults: {
+        dtx: true,
+        red: true,
+        simulcast: true,
+      },
     });
 
     const roomEvent = sdk.RoomEvent ?? {};
@@ -1362,6 +2072,13 @@ export const createVoiceController = (
     });
 
     room.on(roomEvent.Disconnected ?? "disconnected", () => {
+      emitMediaDebugLog(
+        "warn",
+        "livekit",
+        "disconnected",
+        "LiveKit bağlantısı kapandı",
+      );
+
       stopLiveKitMetrics();
       clearAllLiveKitRemoteTracks();
       remoteMediaUi.removeRemoteTrack("local:camera", "video");
@@ -1374,6 +2091,20 @@ export const createVoiceController = (
 
     await room.connect(tokenResult.data.serverUrl, tokenResult.data.token);
     liveKitRoom = room;
+
+    emitMediaDebugLog(
+      "info",
+      "livekit",
+      "connect-success",
+      "LiveKit bağlantısı kuruldu",
+      {
+        roomName: String(room.name ?? deps.getLiveKitDefaultRoom()),
+        selfIdentity: String(room.localParticipant?.identity ?? ""),
+        adaptiveStream: true,
+        dynacast: true,
+      },
+    );
+
     startLiveKitMetrics(tokenResult.data.serverUrl);
 
     await publishLiveKitMicrophone(room);
@@ -1389,6 +2120,13 @@ export const createVoiceController = (
   };
 
   const disposeLiveKit = (): void => {
+    emitMediaDebugLog(
+      "info",
+      "livekit",
+      "dispose",
+      "LiveKit kaynakları temizleniyor",
+    );
+
     stopLiveKitMetrics();
     stopLiveKitCameraShare();
     stopLiveKitScreenShare();
@@ -1475,6 +2213,12 @@ export const createVoiceController = (
     options?: CameraShareOptions,
   ): Promise<boolean> => {
     if (localLiveKitCameraPublication) {
+      emitMediaDebugLog(
+        "info",
+        "camera",
+        "publish-stop-request",
+        "Kamera paylaşımı kapatma isteği alındı",
+      );
       stopLiveKitCameraShare();
       return false;
     }
@@ -1491,9 +2235,36 @@ export const createVoiceController = (
       throw new Error("kamera izi alinamadi");
     }
 
+    const cameraTrackSettings = getTrackSettingsSize(track);
+    const cameraMaxBitrate = resolveCameraMaxBitrate(track);
+    const cameraMaxFramerate = Math.min(60, cameraTrackSettings.fps);
+
     const publication = await liveKitRoom.localParticipant.publishTrack(track, {
       source: sdk.Track?.Source?.Camera,
+      simulcast: true,
+      videoEncoding: {
+        maxBitrate: cameraMaxBitrate,
+        maxFramerate: cameraMaxFramerate,
+      },
     });
+
+    emitMediaDebugLog(
+      "info",
+      "camera",
+      "publish-started",
+      "Kamera yayını başlatıldı",
+      {
+        requestedQuality: options?.quality ?? CAMERA_CAPTURE_DEFAULT_QUALITY,
+        actualQuality: cameraTrackSettings,
+        encoding: {
+          maxBitrate: cameraMaxBitrate,
+          maxFramerate: cameraMaxFramerate,
+          simulcast: true,
+        },
+        publicationSid:
+          String(publication?.trackSid ?? publication?.sid ?? "") || null,
+      },
+    );
 
     localLiveKitCameraStream = stream;
     localLiveKitCameraPublication = publication;
@@ -1511,6 +2282,15 @@ export const createVoiceController = (
     }
 
     track.addEventListener("ended", () => {
+      emitMediaDebugLog(
+        "warn",
+        "camera",
+        "track-ended",
+        "Kamera track ended olayı ile sonlandı",
+        {
+          trackId: track.id,
+        },
+      );
       stopLiveKitCameraShare();
       deps.setVoiceState("Kamera paylaşımı sonlandı", false);
     });
@@ -1523,6 +2303,12 @@ export const createVoiceController = (
     options?: ScreenShareOptions,
   ): Promise<boolean> => {
     if (localLiveKitScreenPublication) {
+      emitMediaDebugLog(
+        "info",
+        "screen",
+        "publish-stop-request",
+        "Ekran paylaşımı kapatma isteği alındı",
+      );
       stopLiveKitScreenShare();
       return false;
     }
@@ -1539,9 +2325,45 @@ export const createVoiceController = (
       throw new Error("ekran izi alinamadi");
     }
 
+    const screenTrackSettings = getTrackSettingsSize(track);
+    const isWindowSource = isWindowCaptureSource(options?.sourceId);
+    const screenBaseMaxBitrate = resolveScreenMaxBitrate(track);
+    const screenMaxBitrate = isWindowSource
+      ? Math.min(screenBaseMaxBitrate, 4_000_000)
+      : screenBaseMaxBitrate;
+    const screenMaxFramerate = isWindowSource
+      ? Math.min(30, screenTrackSettings.fps)
+      : Math.min(60, screenTrackSettings.fps);
+
     const publication = await liveKitRoom.localParticipant.publishTrack(track, {
       source: sdk.Track?.Source?.ScreenShare,
+      simulcast: true,
+      videoEncoding: {
+        maxBitrate: screenMaxBitrate,
+        maxFramerate: screenMaxFramerate,
+      },
     });
+
+    emitMediaDebugLog(
+      "info",
+      "screen",
+      "publish-started",
+      "Ekran yayını başlatıldı",
+      {
+        sourceId: options?.sourceId ?? null,
+        sourceType: isWindowSource ? "window" : "screen",
+        requestedQuality: options?.quality ?? SCREEN_CAPTURE_DEFAULT_QUALITY,
+        actualQuality: screenTrackSettings,
+        encoding: {
+          maxBitrate: screenMaxBitrate,
+          maxFramerate: screenMaxFramerate,
+          simulcast: true,
+        },
+        stabilityCapApplied: isWindowSource,
+        publicationSid:
+          String(publication?.trackSid ?? publication?.sid ?? "") || null,
+      },
+    );
 
     localLiveKitScreenStream = stream;
     localLiveKitScreenPublication = publication;
@@ -1559,6 +2381,16 @@ export const createVoiceController = (
     }
 
     track.addEventListener("ended", () => {
+      emitMediaDebugLog(
+        "warn",
+        "screen",
+        "track-ended",
+        "Ekran track ended olayı ile sonlandı",
+        {
+          trackId: track.id,
+          sourceId: options?.sourceId ?? null,
+        },
+      );
       stopLiveKitScreenShare();
       deps.setVoiceState("Ekran paylaşımı sonlandı", false);
     });
@@ -1642,6 +2474,41 @@ export const createVoiceController = (
   const setOutputMuted = (muted: boolean): void => {
     outputMuted = muted;
     applyOutputVolume();
+  };
+
+  const setInputGain = async (gainPercent: number): Promise<void> => {
+    const next = clampInputGainPercent(gainPercent);
+    if (next === inputGainPercent) {
+      return;
+    }
+
+    inputGainPercent = next;
+
+    emitMediaDebugLog(
+      "info",
+      "audio",
+      "input-gain-updated",
+      "Mikrofon giriş kazancı güncellendi",
+      {
+        gainPercent: inputGainPercent,
+        multiplier: inputGainPercentToMultiplier(inputGainPercent),
+      },
+    );
+
+    if (!localAudioStream) {
+      return;
+    }
+
+    if (rnnoiseInputGainNode && rnnoiseAudioContext) {
+      applyInputGainNodeValue();
+      return;
+    }
+
+    if (!rnnoiseEnabled && inputGainPercent === 100) {
+      return;
+    }
+
+    await rebuildLocalAudioPipeline();
   };
 
   const setRemoteParticipantAudioState = (
@@ -1775,6 +2642,7 @@ export const createVoiceController = (
     setManualSpeakingThreshold,
     setOutputVolume,
     setOutputMuted,
+    setInputGain,
     setRemoteParticipantAudioState,
     getRemoteParticipantAudioState,
     toggleMicTest,

@@ -39,6 +39,9 @@ const applyGpuAccelerationPreference = (enabled: boolean): void => {
   app.commandLine.appendSwitch("enable-gpu-rasterization");
   app.commandLine.appendSwitch("enable-zero-copy");
   app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+  app.commandLine.appendSwitch("enable-accelerated-video-decode");
+  app.commandLine.appendSwitch("enable-accelerated-video-encode");
+  app.commandLine.appendSwitch("ignore-gpu-blocklist");
 };
 
 const initialDesktopPreferences = desktopPreferencesStore.get();

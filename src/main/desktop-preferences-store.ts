@@ -11,7 +11,7 @@ export interface DesktopPreferences {
 const DEFAULT_PREFERENCES: DesktopPreferences = {
   closeToTrayOnClose: false,
   launchAtStartup: false,
-  gpuAccelerationEnabled: false,
+  gpuAccelerationEnabled: true,
 };
 
 const isBoolean = (value: unknown): value is boolean => {

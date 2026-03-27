@@ -53,11 +53,6 @@ export const buildDesktopLayout = (): string => {
         </div>
       </header>
 
-      <!-- ═══ Global Status ═══ -->
-      <section class="px-4 py-2.5 border-b border-border bg-surface-1/80 z-10">
-        <p id="status" class="status-text m-0 rounded-xl border border-border bg-surface-2/50 px-4 py-2.5 text-text-secondary text-sm leading-relaxed transition-all duration-300">Masaüstü istemcisi başlatıldı.</p>
-      </section>
-
       <!-- ═══ Auth View ═══ -->
       <section id="authView" class="flex-1 overflow-auto z-10">
         <div class="max-w-lg mx-auto mt-10 mb-10 p-6 rounded-2xl border border-border glass">
@@ -346,7 +341,7 @@ export const buildDesktopLayout = (): string => {
 
                   <div class="flex items-center justify-between gap-3 mt-4">
                     <span class="text-text-muted text-xs font-medium">Arayüz Sesleri</span>
-                    <button id="uiSoundsToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Açık</button>
+                    <button id="uiSoundsToggle" class="settings-switch" type="button" role="switch" aria-checked="true" aria-label="Arayüz Sesleri"></button>
                   </div>
 
                   <div class="flex items-center justify-between gap-3 mt-3">
@@ -354,7 +349,7 @@ export const buildDesktopLayout = (): string => {
                       <span class="text-text-muted text-xs font-medium block">RNNoise Gürültü Engelleme</span>
                       <p class="m-0 mt-1 text-[11px] text-text-muted leading-snug">Arka plan gürültüsünü profesyonel kalite ayarları ile azaltır.</p>
                     </div>
-                    <button id="rnnoiseToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Açık</button>
+                    <button id="rnnoiseToggle" class="settings-switch" type="button" role="switch" aria-checked="true" aria-label="RNNoise Gürültü Engelleme"></button>
                   </div>
 
                   <label class="text-text-muted text-xs font-medium mt-4 block" for="microphoneSelect">Mikrofon</label>
@@ -364,8 +359,11 @@ export const buildDesktopLayout = (): string => {
                     <button id="micTestToggle" class="btn-secondary text-xs h-10" type="button">Ses Testini Başlat</button>
                   </div>
 
-                  <label class="mt-4 block text-text-muted text-xs font-medium" for="outputVolume">Ses Seviyesi: <strong id="outputVolumeValue" class="text-text-primary">100%</strong></label>
-                  <input id="outputVolume" class="mt-1 w-full" type="range" min="0" max="100" step="1" value="100" />
+                  <label class="mt-4 block text-text-muted text-xs font-medium" for="outputVolume">Kulaklık Ses Seviyesi: <strong id="outputVolumeValue" class="text-text-primary">100%</strong></label>
+                  <input id="outputVolume" class="mt-1 w-full ct-range" type="range" min="0" max="100" step="1" value="100" />
+
+                  <label class="mt-4 block text-text-muted text-xs font-medium" for="inputGain">Mikrofon Ses Kazancı: <strong id="inputGainValue" class="text-text-primary">100%</strong></label>
+                  <input id="inputGain" class="mt-1 w-full ct-range" type="range" min="0" max="200" step="1" value="100" />
 
                   <label class="text-text-muted text-xs font-medium mt-4 block" for="speakingThresholdMode">Ses Algılama Modu</label>
                   <select id="speakingThresholdMode" class="mt-1">
@@ -374,7 +372,7 @@ export const buildDesktopLayout = (): string => {
                   </select>
 
                   <label class="mt-4 block text-text-muted text-xs font-medium" for="speakingThreshold">Konuşma Eşiği: <strong id="speakingThresholdValue" class="text-text-primary">Otomatik</strong></label>
-                  <input id="speakingThreshold" type="range" min="1" max="100" step="1" value="24" />
+                  <input id="speakingThreshold" class="ct-range" type="range" min="1" max="100" step="1" value="24" />
                   <p id="speakingThresholdHint" class="mt-1 text-text-muted text-[11px] leading-snug">Otomatik mod, ortam gürültüsüne göre eşiği canlı ayarlar.</p>
 
                   <div id="remoteAudioContainer" class="mt-4 flex flex-col gap-2"></div>
@@ -405,7 +403,7 @@ export const buildDesktopLayout = (): string => {
                       </div>
                     </div>
                     <button id="cameraTestToggle" class="btn-secondary text-xs h-10" type="button">Kamera Testini Başlat</button>
-                    <video id="cameraTestPreview" class="w-full h-40 rounded-lg bg-surface-0 object-cover" autoplay playsinline muted></video>
+                    <video id="cameraTestPreview" class="media-preview-video media-preview-video--camera" autoplay playsinline muted></video>
                   </div>
                 </section>
 
@@ -442,7 +440,19 @@ export const buildDesktopLayout = (): string => {
                       </div>
                     </div>
                     <button id="screenTestToggle" class="btn-secondary text-xs h-10" type="button">Ekran Testini Başlat</button>
-                    <video id="screenTestPreview" class="w-full h-40 rounded-lg bg-surface-0 object-contain" autoplay playsinline muted></video>
+                    <video id="screenTestPreview" class="media-preview-video media-preview-video--screen" autoplay playsinline muted></video>
+
+                    <div class="media-debug-log-card rounded-xl border border-border bg-surface-2/55 p-3">
+                      <div class="media-debug-log-toolbar">
+                        <h3 class="media-debug-log-title m-0">Kamera & Yayın Logları</h3>
+                        <div class="media-debug-log-actions">
+                          <button id="mediaDebugCopyButton" class="btn-secondary h-8 px-3 text-[11px]" type="button">Logları Kopyala</button>
+                          <button id="mediaDebugClearButton" class="btn-secondary h-8 px-3 text-[11px]" type="button">Logları Temizle</button>
+                        </div>
+                      </div>
+                      <p class="media-debug-log-hint m-0 mt-1">Kamera ve ekran yayını sırasında kullanılan kalite profilleri, fallback denemeleri, bitrate/FPS ve LiveKit yayın olayları burada tutulur.</p>
+                      <pre id="mediaDebugLogOutput" class="media-debug-log-output" aria-live="polite">Loglar yükleniyor...</pre>
+                    </div>
                   </div>
                 </section>
 
@@ -457,7 +467,7 @@ export const buildDesktopLayout = (): string => {
                         <p class="m-0 text-sm font-medium text-text-primary">Kapatınca Sistem Tepsisine Gönder</p>
                         <p class="m-0 mt-0.5 text-[11px] text-text-muted">Kapat tuşu uygulamayı tamamen kapatmak yerine gizler.</p>
                       </div>
-                      <button id="closeToTrayToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Kapalı</button>
+                      <button id="closeToTrayToggle" class="settings-switch" type="button" role="switch" aria-checked="false" aria-label="Kapatınca Sistem Tepsisine Gönder"></button>
                     </div>
 
                     <div class="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2/50 px-3 py-2.5">
@@ -465,7 +475,7 @@ export const buildDesktopLayout = (): string => {
                         <p class="m-0 text-sm font-medium text-text-primary">Başlangıçta Çalıştır</p>
                         <p class="m-0 mt-0.5 text-[11px] text-text-muted">Windows açıldığında uygulama otomatik başlatılır.</p>
                       </div>
-                      <button id="launchAtStartupToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Kapalı</button>
+                      <button id="launchAtStartupToggle" class="settings-switch" type="button" role="switch" aria-checked="false" aria-label="Başlangıçta Çalıştır"></button>
                     </div>
 
                     <div class="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2/50 px-3 py-2.5">
@@ -473,7 +483,7 @@ export const buildDesktopLayout = (): string => {
                         <p class="m-0 text-sm font-medium text-text-primary">GPU Hızlandırma</p>
                         <p class="m-0 mt-0.5 text-[11px] text-text-muted">Daha akıcı kamera ve yayın işleme sağlar. Değişiklik için uygulamayı yeniden başlatman gerekir.</p>
                       </div>
-                      <button id="gpuAccelerationToggle" class="btn-secondary min-w-[88px] h-9 text-xs" type="button">Kapalı</button>
+                      <button id="gpuAccelerationToggle" class="settings-switch" type="button" role="switch" aria-checked="false" aria-label="GPU Hızlandırma"></button>
                     </div>
 
                     <div class="flex items-center justify-end">
@@ -572,13 +582,15 @@ export const buildDesktopLayout = (): string => {
         </div>
         <button id="participantAudioMuteToggle" class="participant-audio-menu-action" type="button">Bu kullanıcıyı sustur</button>
         <label class="participant-audio-menu-label" for="participantAudioVolumeSlider">Ses seviyesi <strong id="participantAudioVolumeValue">100%</strong></label>
-        <input id="participantAudioVolumeSlider" class="participant-audio-menu-slider" type="range" min="0" max="200" step="1" value="100" />
+        <input id="participantAudioVolumeSlider" class="participant-audio-menu-slider ct-range" type="range" min="0" max="200" step="1" value="100" />
         <div class="participant-audio-menu-presets">
           <button id="participantAudioPreset100" class="participant-audio-menu-preset" type="button">100%</button>
           <button id="participantAudioPreset150" class="participant-audio-menu-preset" type="button">150%</button>
           <button id="participantAudioPreset200" class="participant-audio-menu-preset" type="button">200%</button>
         </div>
       </section>
+
+      <section id="toastContainer" class="toast-stack" aria-live="polite" aria-atomic="false"></section>
 
     </main>
   `;

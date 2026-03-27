@@ -2,7 +2,7 @@ export interface DomRefs {
   windowMinimize: HTMLButtonElement;
   windowMaximize: HTMLButtonElement;
   windowClose: HTMLButtonElement;
-  status: HTMLParagraphElement;
+  toastContainer: HTMLElement;
   connectionState: HTMLElement;
   connectionBadge: HTMLElement;
   navUsers: HTMLButtonElement;
@@ -66,6 +66,8 @@ export interface DomRefs {
   remoteAudioContainer: HTMLElement;
   outputVolume: HTMLInputElement;
   outputVolumeValue: HTMLElement;
+  inputGain: HTMLInputElement;
+  inputGainValue: HTMLElement;
   speakingThresholdMode: HTMLSelectElement;
   speakingThreshold: HTMLInputElement;
   speakingThresholdValue: HTMLElement;
@@ -98,6 +100,9 @@ export interface DomRefs {
   screenMonitorSelect: HTMLSelectElement;
   screenCaptureRefreshButton: HTMLButtonElement;
   screenCaptureSourceList: HTMLElement;
+  mediaDebugLogOutput: HTMLElement;
+  mediaDebugCopyButton: HTMLButtonElement;
+  mediaDebugClearButton: HTMLButtonElement;
   participantAudioMenu: HTMLElement;
   participantAudioMenuTitle: HTMLElement;
   participantAudioMuteToggle: HTMLButtonElement;
@@ -149,7 +154,7 @@ export const queryDomRefs = (): DomRefs => {
     windowMinimize: requireElement<HTMLButtonElement>("windowMinimize"),
     windowMaximize: requireElement<HTMLButtonElement>("windowMaximize"),
     windowClose: requireElement<HTMLButtonElement>("windowClose"),
-    status: requireElement<HTMLParagraphElement>("status"),
+    toastContainer: requireElement("toastContainer"),
     connectionState: requireElement("connectionState"),
     connectionBadge: requireElement("connectionBadge"),
     navUsers: requireElement<HTMLButtonElement>("navUsers"),
@@ -233,6 +238,8 @@ export const queryDomRefs = (): DomRefs => {
     remoteAudioContainer: requireElement("remoteAudioContainer"),
     outputVolume: requireElement<HTMLInputElement>("outputVolume"),
     outputVolumeValue: requireElement("outputVolumeValue"),
+    inputGain: requireElement<HTMLInputElement>("inputGain"),
+    inputGainValue: requireElement("inputGainValue"),
     speakingThresholdMode: requireElement<HTMLSelectElement>(
       "speakingThresholdMode",
     ),
@@ -291,6 +298,13 @@ export const queryDomRefs = (): DomRefs => {
       "screenCaptureRefreshButton",
     ),
     screenCaptureSourceList: requireElement("screenCaptureSourceList"),
+    mediaDebugLogOutput: requireElement("mediaDebugLogOutput"),
+    mediaDebugCopyButton: requireElement<HTMLButtonElement>(
+      "mediaDebugCopyButton",
+    ),
+    mediaDebugClearButton: requireElement<HTMLButtonElement>(
+      "mediaDebugClearButton",
+    ),
     participantAudioMenu: requireElement("participantAudioMenu"),
     participantAudioMenuTitle: requireElement("participantAudioMenuTitle"),
     participantAudioMuteToggle: requireElement<HTMLButtonElement>(
