@@ -24,6 +24,24 @@ const cloneState = (state: DesktopUpdateState): DesktopUpdateState => {
 export const createDesktopAppUpdater = (): DesktopAppUpdater => {
   const listeners = new Set<(state: DesktopUpdateState) => void>();
 
+  const normalizeUpdaterErrorMessage = (error: unknown): string => {
+    if (!(error instanceof Error)) {
+      return "Bilinmeyen güncelleme hatası";
+    }
+
+    const rawMessage = (error.message || "").trim();
+    if (!rawMessage) {
+      return "Bilinmeyen güncelleme hatası";
+    }
+
+    const compact = rawMessage.replace(/\s+/g, " ");
+    if (compact.length > 220) {
+      return `${compact.slice(0, 220)}...`;
+    }
+
+    return compact;
+  };
+
   let state: DesktopUpdateState = {
     status: app.isPackaged ? "idle" : "disabled",
     currentVersion: app.getVersion(),
@@ -125,8 +143,7 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
     });
 
     autoUpdater.on("error", (error) => {
-      const message =
-        error instanceof Error ? error.message : "Bilinmeyen güncelleme hatası";
+      const message = normalizeUpdaterErrorMessage(error);
       updateState({
         status: "error",
         message,
@@ -145,8 +162,7 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
     try {
       await autoUpdater.checkForUpdates();
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Güncelleme kontrol edilemedi";
+      const message = normalizeUpdaterErrorMessage(error);
       updateState({
         status: "error",
         message,
@@ -178,32 +194,43 @@ export const createDesktopAppUpdater = (): DesktopAppUpdater => {
       };
     }
 
-    if (state.status !== "available") {
-      return {
-        accepted: false,
-        state: cloneState(state),
-      };
-    }
-
     try {
+      if (state.status !== "available") {
+        await autoUpdater.checkForUpdates();
+      }
+
+      if (state.status !== "available") {
+        return {
+          accepted: false,
+          state: cloneState(state),
+        };
+      }
+
       installAfterDownloadRequested = true;
       updateState({
         status: "downloading",
         downloadProgressPercent: 0,
         message: "Güncelleme indiriliyor...",
       });
-      await autoUpdater.downloadUpdate();
+
+      try {
+        await autoUpdater.downloadUpdate();
+      } catch {
+        await autoUpdater.checkForUpdates();
+        await autoUpdater.downloadUpdate();
+      }
+
       return {
         accepted: true,
         state: cloneState(state),
       };
     } catch (error) {
       installAfterDownloadRequested = false;
-      const message =
-        error instanceof Error ? error.message : "Güncelleme indirilemedi";
+      const message = normalizeUpdaterErrorMessage(error);
       updateState({
         status: "error",
         message,
+        checkedAt: new Date().toISOString(),
       });
       return {
         accepted: false,

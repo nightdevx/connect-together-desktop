@@ -315,7 +315,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    setUpdateHint("Güncelleme kontrolü başarısız");
+    const errorText =
+      typeof state.message === "string" && state.message.trim().length > 0
+        ? state.message.trim()
+        : "Bilinmeyen hata";
+    setUpdateHint(`Güncelleme hatası: ${errorText}`);
     setUpdateActionButton({
       label: "Tekrar Dene",
     });
