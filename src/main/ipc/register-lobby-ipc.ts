@@ -1,6 +1,11 @@
 import type { RtcSignalPayload } from "../../shared/contracts";
 import { ipcMain } from "electron";
-import { DesktopApiError, type LobbyStateResponse } from "../backend-client";
+import {
+  DesktopApiError,
+  type LobbyChatListResponse,
+  type LobbyChatSendResponse,
+  type LobbyStateResponse,
+} from "../backend-client";
 import { IPC_ERROR_CODES } from "./ipc-error-codes";
 import type {
   DesktopIpcModuleHelpers,
@@ -201,4 +206,57 @@ export const registerLobbyIpcHandlers = (
       return helpers.fail<LobbyStateResponse>(error);
     }
   });
+
+  ipcMain.handle(
+    "desktop:chat-list-lobby-messages",
+    async (_event, payload: unknown) => {
+      try {
+        let limit: number | undefined;
+
+        if (payload !== undefined) {
+          const source = helpers.ensureObject(payload, "chat list payload");
+          if (source.limit !== undefined) {
+            if (
+              typeof source.limit !== "number" ||
+              !Number.isFinite(source.limit)
+            ) {
+              throw new DesktopApiError(
+                IPC_ERROR_CODES.VALIDATION_ERROR,
+                400,
+                "limit must be a number",
+              );
+            }
+
+            limit = Math.max(1, Math.min(200, Math.floor(source.limit)));
+          }
+        }
+
+        const response = await helpers.withAccessToken(async (accessToken) => {
+          return deps.backendClient.listLobbyMessages(accessToken, limit);
+        });
+
+        return helpers.ok<LobbyChatListResponse>(response);
+      } catch (error) {
+        return helpers.fail<LobbyChatListResponse>(error);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "desktop:chat-send-lobby-message",
+    async (_event, payload: unknown) => {
+      try {
+        const source = helpers.ensureObject(payload, "chat send payload");
+        const body = helpers.ensureValidString(source.body, "body", 1, 1200);
+
+        const response = await helpers.withAccessToken(async (accessToken) => {
+          return deps.backendClient.sendLobbyMessage(accessToken, body);
+        });
+
+        return helpers.ok<LobbyChatSendResponse>(response);
+      } catch (error) {
+        return helpers.fail<LobbyChatSendResponse>(error);
+      }
+    },
+  );
 };

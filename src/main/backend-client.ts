@@ -1,5 +1,6 @@
 import type {
   ChangePasswordRequest,
+  LobbyChatMessage,
   LoginRequest,
   MediaProducerKind,
   MediaSourceType,
@@ -44,6 +45,14 @@ export interface LobbyStateResponse {
 
 export interface LobbyActionResponse {
   accepted: boolean;
+}
+
+export interface LobbyChatListResponse {
+  messages: LobbyChatMessage[];
+}
+
+export interface LobbyChatSendResponse {
+  message: LobbyChatMessage;
 }
 
 export interface MediaTransportResponse {
@@ -194,6 +203,39 @@ export class BackendClient {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+    });
+  }
+
+  public async listLobbyMessages(
+    accessToken: string,
+    limit?: number,
+  ): Promise<LobbyChatListResponse> {
+    const path = new URL("/chat/lobby/messages", this.baseUrl);
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      path.searchParams.set("limit", `${Math.floor(limit)}`);
+    }
+
+    return this.request<LobbyChatListResponse>(
+      `${path.pathname}${path.search}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    );
+  }
+
+  public async sendLobbyMessage(
+    accessToken: string,
+    body: string,
+  ): Promise<LobbyChatSendResponse> {
+    return this.request<LobbyChatSendResponse>("/chat/lobby/messages", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ body }),
     });
   }
 

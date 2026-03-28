@@ -2,6 +2,7 @@ import type {
   DesktopRealtimeEvent,
   LobbyMemberSnapshot,
 } from "../../types/desktop-api";
+import type { LobbyChatMessage } from "../../../shared/contracts";
 
 interface RealtimeControllerDeps {
   onConnection: (
@@ -19,6 +20,8 @@ interface RealtimeControllerDeps {
   onMemberJoined: (member: LobbyMemberSnapshot, revision?: number) => void;
   onMemberUpdated: (member: LobbyMemberSnapshot, revision?: number) => void;
   onMemberLeft: (userId: string, revision?: number) => void;
+  onLobbyChatHistory: (messages: LobbyChatMessage[]) => void;
+  onLobbyMessage: (message: LobbyChatMessage) => void;
   onAutoRejoin: () => void;
   onRtcSignal: (payload: unknown) => void;
   onProducerAvailable: (payload: {
@@ -87,6 +90,16 @@ export const subscribeRealtimeEvents = (
 
     if (event.type === "lobby-member-left" && event.userId) {
       deps.onMemberLeft(event.userId, event.revision);
+      return;
+    }
+
+    if (event.type === "lobby-chat-history" && Array.isArray(event.messages)) {
+      deps.onLobbyChatHistory(event.messages);
+      return;
+    }
+
+    if (event.type === "lobby-message" && event.chatMessage) {
+      deps.onLobbyMessage(event.chatMessage);
       return;
     }
 

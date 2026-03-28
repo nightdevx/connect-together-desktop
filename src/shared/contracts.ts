@@ -66,6 +66,15 @@ export interface LobbyMember {
   screenProducerId: string | null;
 }
 
+export interface LobbyChatMessage {
+  id: string;
+  channel: "lobby";
+  userId: string;
+  username: string;
+  body: string;
+  createdAt: string;
+}
+
 export type MediaProducerKind = "audio" | "video";
 export type MediaSourceType = "microphone" | "camera" | "screen";
 
@@ -73,6 +82,8 @@ export interface ServerToClientEvents {
   "lobby:state": (members: LobbyMember[]) => void;
   "lobby:member-joined": (member: LobbyMember) => void;
   "lobby:member-left": (payload: { userId: string }) => void;
+  "lobby:chat-history": (messages: LobbyChatMessage[]) => void;
+  "lobby:message": (message: LobbyChatMessage) => void;
   "rtc:signal": (payload: RtcSignalPayload) => void;
   "media:producer-available": (payload: MediaProducerPayload) => void;
   "media:producer-closed": (payload: MediaProducerPayload) => void;

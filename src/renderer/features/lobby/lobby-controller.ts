@@ -48,10 +48,10 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
       type === "mic"
         ? isOn
           ? '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-6 6.93V20h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 0 0 10 0Z"/></svg>'
-          : '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0Zm6.7 14.3a1 1 0 0 1-1.4 1.4l-18-18a1 1 0 1 1 1.4-1.4l18 18Z"/></svg>'
+          : '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0ZM2.3 20.3a1 1 0 1 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z"/></svg>'
         : isOn
           ? '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 0 0-8 8v4a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6v-1a6 6 0 1 1 12 0v1h-2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a3 3 0 0 0 3-3v-4a8 8 0 0 0-8-8Z"/></svg>'
-          : '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4Zm8.2 18.8a1 1 0 0 1-1.4 0L3.2 7.2a1 1 0 1 1 1.4-1.4l15.6 15.6a1 1 0 0 1 0 1.4Zm-.2-6.8v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Z"/></svg>';
+          : '<svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4ZM20 16v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Zm-16.7 4.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z"/></svg>';
 
     return icon;
   };
@@ -119,6 +119,71 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
     return card;
   };
 
+  const patchMemberStateInDom = (member: LobbyMemberSnapshot): boolean => {
+    const displayName = resolveDisplayName(member.userId, member.username);
+    const isSpeaking = member.speaking && !member.muted;
+    let foundAny = false;
+
+    for (const row of Array.from(
+      dom.members.querySelectorAll<HTMLElement>(".member-item"),
+    )) {
+      if (row.dataset.userId !== member.userId) {
+        continue;
+      }
+
+      foundAny = true;
+      row.classList.toggle("speaking", isSpeaking);
+
+      const avatar = row.querySelector<HTMLElement>(".member-item-avatar");
+      if (avatar) {
+        avatar.textContent = getInitials(displayName);
+      }
+
+      const name = row.querySelector<HTMLElement>(".member-item-name");
+      if (name) {
+        name.textContent = displayName;
+      }
+
+      const presence = row.querySelector<HTMLElement>(".member-item-presence");
+      if (presence) {
+        presence.innerHTML = "";
+        presence.appendChild(createStatusIcon("mic", !member.muted));
+        presence.appendChild(createStatusIcon("headphone", !member.deafened));
+      }
+    }
+
+    for (const card of Array.from(
+      dom.participantGrid.querySelectorAll<HTMLElement>(".participant-card"),
+    )) {
+      if (card.dataset.userId !== member.userId) {
+        continue;
+      }
+
+      foundAny = true;
+      card.classList.toggle("speaking", isSpeaking);
+
+      const cardName = card.querySelector<HTMLElement>(
+        ".participant-card-name",
+      );
+      if (cardName) {
+        cardName.textContent = displayName;
+      }
+
+      const cardPresence = card.querySelector<HTMLElement>(
+        ".participant-card-presence",
+      );
+      if (cardPresence) {
+        cardPresence.innerHTML = "";
+        cardPresence.appendChild(createStatusIcon("mic", !member.muted));
+        cardPresence.appendChild(
+          createStatusIcon("headphone", !member.deafened),
+        );
+      }
+    }
+
+    return foundAny;
+  };
+
   const renderFromMap = (): void => {
     dom.memberCount.textContent = String(lobbyMemberMap.size);
     dom.participantGrid.dataset.count = String(lobbyMemberMap.size);
@@ -148,17 +213,20 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
       identity.className = "flex items-center gap-2.5 min-w-0";
 
       const avatar = document.createElement("div");
-      avatar.className = "avatar w-7 h-7 rounded-lg text-xs flex-shrink-0";
+      avatar.className =
+        "member-item-avatar avatar w-7 h-7 rounded-lg text-xs flex-shrink-0";
       const displayName = resolveDisplayName(member.userId, member.username);
 
       avatar.textContent = getInitials(displayName);
 
       const name = document.createElement("span");
-      name.className = "text-sm font-medium text-text-primary truncate";
+      name.className =
+        "member-item-name text-sm font-medium text-text-primary truncate";
       name.textContent = displayName;
 
       const presence = document.createElement("span");
-      presence.className = "flex items-center gap-1.5 flex-shrink-0";
+      presence.className =
+        "member-item-presence flex items-center gap-1.5 flex-shrink-0";
       presence.appendChild(createStatusIcon("mic", !member.muted));
       presence.appendChild(createStatusIcon("headphone", !member.deafened));
 
@@ -210,7 +278,19 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
   };
 
   const addOrUpdateMember = (member: LobbyMemberSnapshot): void => {
+    const previous = lobbyMemberMap.get(member.userId);
     lobbyMemberMap.set(member.userId, member);
+
+    if (previous) {
+      const mediaLayoutChanged =
+        previous.cameraEnabled !== member.cameraEnabled ||
+        previous.screenSharing !== member.screenSharing;
+
+      if (!mediaLayoutChanged && patchMemberStateInDom(member)) {
+        return;
+      }
+    }
+
     renderFromMap();
   };
 

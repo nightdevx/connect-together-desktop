@@ -134,10 +134,10 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Lobby Sidebar -->
             <section id="lobbySidebar" class="side-view min-h-0 grid grid-rows-[auto_1fr]">
-              <header class="px-4 pt-4 pb-3 border-b border-border">
+              <header class="side-view-header px-4 pt-4 pb-3 border-b border-border">
                 <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Lobi</h2>
               </header>
-              <div class="overflow-auto px-3 py-3">
+              <div class="side-view-body overflow-auto px-3 py-3">
                 <p class="text-text-muted text-xs mb-2">Sohbette olan arkadaşlar</p>
                 <ul id="members" class="list-none m-0 p-0 flex flex-col gap-2"></ul>
               </div>
@@ -145,12 +145,12 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Users Sidebar -->
             <section id="usersSidebar" class="side-view hidden min-h-0 grid grid-rows-[auto_1fr]">
-              <header class="px-4 pt-4 pb-3 border-b border-border">
+              <header class="side-view-header px-4 pt-4 pb-3 border-b border-border">
                 <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Arkadaşlar</h2>
               </header>
-              <div class="overflow-auto px-3 py-3">
+              <div class="side-view-body overflow-auto px-3 py-3">
                 <p class="text-text-muted text-xs mb-2">Arkadaş listesini ve çevrimiçi durumunu buradan görebilirsin.</p>
-                <div class="rounded-xl border border-border bg-surface-2/50 p-3 mb-2">
+                <div class="sidebar-stat-card rounded-xl border border-border bg-surface-2/50 p-3 mb-2">
                   <span class="text-text-muted text-[11px] uppercase tracking-wider">Toplam Kullanıcı</span>
                   <strong id="usersDirectoryCount" class="block mt-1 text-text-primary text-lg font-bold">0</strong>
                 </div>
@@ -159,11 +159,11 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Settings Sidebar -->
             <section id="settingsSidebar" class="side-view hidden min-h-0 grid grid-rows-[auto_1fr]">
-              <header class="px-4 pt-4 pb-3 border-b border-border">
+              <header class="side-view-header px-4 pt-4 pb-3 border-b border-border">
                 <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Ayarlar</h2>
               </header>
-              <div class="overflow-auto px-3 py-3">
-                <div class="rounded-xl border border-border bg-surface-2/50 p-3 mb-3">
+              <div class="side-view-body overflow-auto px-3 py-3">
+                <div class="sidebar-stat-card rounded-xl border border-border bg-surface-2/50 p-3 mb-3">
                   <span class="text-text-muted text-[11px] uppercase tracking-wider">Kullanıcı</span>
                   <strong id="currentUser" class="block mt-1 text-text-primary font-semibold">-</strong>
                 </div>
@@ -190,7 +190,7 @@ export const buildDesktopLayout = (): string => {
             </section>
 
             <!-- ─── Quick Controls ─── -->
-            <section class="border-t border-border p-3 bg-surface-0/60" aria-label="Hızlı Kontroller">
+            <section class="sidebar-quick-controls border-t border-border p-3 bg-surface-0/60" aria-label="Hızlı Kontroller">
               <section class="voice-connection-shell mb-3" aria-label="Ses bağlantı detayları">
                 <button id="connectionDiagBanner" class="voice-connection-banner" type="button" aria-expanded="false" aria-controls="connectionDiagDetailsCard" data-state="idle">
                   <div class="voice-connection-banner-icon" aria-hidden="true">
@@ -227,20 +227,20 @@ export const buildDesktopLayout = (): string => {
                 </div>
               </section>
 
-              <div class="grid grid-cols-5 gap-2">
+              <div class="sidebar-quick-grid grid grid-cols-5 gap-2">
                 <button id="quickMicToggle" class="quick-icon-button h-12 rounded-xl border border-border bg-surface-2/50 text-text-secondary flex flex-col items-center justify-center gap-0.5 cursor-pointer" type="button" title="Mikrofon" data-state-text="ON">
                   <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-6 6.93V20h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 0 0 10 0Z" />
                   </svg>
                   <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0Zm6.7 14.3a1 1 0 0 1-1.4 1.4l-18-18a1 1 0 1 1 1.4-1.4l18 18Z" />
+                    <path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0ZM2.3 20.3a1 1 0 1 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z" />
                   </svg>
                   <span class="sr-only">Mikrofon</span>
                 </button>
 
                 <button id="quickCameraToggle" class="quick-icon-button h-12 rounded-xl border border-border bg-surface-2/50 text-text-secondary flex flex-col items-center justify-center gap-0.5 cursor-pointer" type="button" title="Kamera" data-state-text="OFF">
                   <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M17 7a2 2 0 0 1 2 2v1.18l2.22-1.33A1 1 0 0 1 23 9.7v4.6a1 1 0 0 1-1.78.85L19 13.82V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h12Zm4.41 14.99L2.01 2.59a1 1 0 1 1 1.41-1.41l19.4 19.4a1 1 0 0 1-1.41 1.41Z"/>
+                    <path d="M17 7a2 2 0 0 1 2 2v1.18l2.22-1.33A1 1 0 0 1 23 9.7v4.6a1 1 0 0 1-1.78.85L19 13.82V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h12Zm-13.7 13.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z"/>
                   </svg>
                   <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M17 7a2 2 0 0 1 2 2v1.18l2.22-1.33A1 1 0 0 1 23 9.7v4.6a1 1 0 0 1-1.78.85L19 13.82V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h12Z"/>
@@ -250,7 +250,7 @@ export const buildDesktopLayout = (): string => {
 
                 <button id="quickScreenToggle" class="quick-icon-button h-12 rounded-xl border border-border bg-surface-2/50 text-text-secondary flex flex-col items-center justify-center gap-0.5 cursor-pointer" type="button" title="Ekran Paylaşımı" data-state-text="OFF">
                   <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M4 5h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v1h2a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h2v-1H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v9h16V7H4Zm18.7 15.3a1 1 0 0 1-1.4 1.4l-20-20a1 1 0 1 1 1.4-1.4l20 20Z"/>
+                    <path d="M4 5h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v1h2a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h2v-1H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v9h16V7H4Zm-.7 13.3a1 1 0 0 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z"/>
                   </svg>
                   <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M4 5h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v1h2a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h2v-1H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v9h16V7H4Z"/>
@@ -263,17 +263,17 @@ export const buildDesktopLayout = (): string => {
                     <path d="M12 4a8 8 0 0 0-8 8v4a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6v-1a6 6 0 1 1 12 0v1h-2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a3 3 0 0 0 3-3v-4a8 8 0 0 0-8-8Z" />
                   </svg>
                   <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4Zm8.2 18.8a1 1 0 0 1-1.4 0L3.2 7.2a1 1 0 1 1 1.4-1.4l15.6 15.6a1 1 0 0 1 0 1.4Zm-.2-6.8v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Z" />
+                    <path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4ZM20 16v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Zm-16.7 4.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z" />
                   </svg>
                   <span class="sr-only">Kulaklık</span>
                 </button>
 
                 <button id="quickConnectionToggle" class="quick-icon-button h-12 rounded-xl border border-border bg-surface-2/50 text-text-secondary flex flex-col items-center justify-center gap-0.5 cursor-pointer" type="button" title="Sohbete Bağlan" data-state-text="OFF">
                   <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M7 4a3 3 0 0 0-3 3v3a1 1 0 1 0 2 0V7a1 1 0 0 1 1-1h3a1 1 0 1 0 0-2H7Zm7 1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 1 0 2 0V7a3 3 0 0 0-3-3h-3a1 1 0 0 0-1 1ZM4 14a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h2a1 1 0 1 0 0-2H6a1 1 0 0 1-1-1v-2a1 1 0 0 0-1-1Zm16 0a1 1 0 0 0-1 1v2a1 1 0 0 1-1 1h-2a1 1 0 1 0 0 2h2a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM11 8a1 1 0 0 1 2 0v3h2.5a1 1 0 1 1 0 2H13v3a1 1 0 1 1-2 0v-3H8.5a1 1 0 1 1 0-2H11V8Z" />
+                    <path d="M3.65 5.09a2 2 0 0 1 2.1-1.2l3.15.35a2 2 0 0 1 1.7 1.44l.73 2.58a2 2 0 0 1-.57 1.95l-1.2 1.2a14.3 14.3 0 0 0 4.03 4.03l1.2-1.2a2 2 0 0 1 1.95-.57l2.58.73a2 2 0 0 1 1.44 1.7l.35 3.15a2 2 0 0 1-1.2 2.1 6.65 6.65 0 0 1-2.73.6C8.91 22 2 15.09 2 6.82c0-.95.2-1.87.6-2.73a1 1 0 0 1 1.05-.6Zm-.35 15.21a1 1 0 0 0 1.4 1.4l16-16a1 1 0 0 0-1.4-1.4l-16 16Z" />
                   </svg>
                   <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M7 4a3 3 0 0 0-3 3v3a1 1 0 1 0 2 0V7a1 1 0 0 1 1-1h3a1 1 0 1 0 0-2H7Zm7 1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 1 0 2 0V7a3 3 0 0 0-3-3h-3a1 1 0 0 0-1 1ZM4 14a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h2a1 1 0 1 0 0-2H6a1 1 0 0 1-1-1v-2a1 1 0 0 0-1-1Zm16 0a1 1 0 0 0-1 1v2a1 1 0 0 1-1 1h-2a1 1 0 1 0 0 2h2a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM9.2 8.8a1 1 0 0 1 1.4 0L12 10.18l1.4-1.38a1 1 0 1 1 1.4 1.42L13.42 11.6l1.38 1.4a1 1 0 1 1-1.42 1.4L12 13.02l-1.4 1.38a1 1 0 1 1-1.4-1.42l1.38-1.38-1.38-1.4a1 1 0 0 1 0-1.4Z" />
+                    <path d="M3.65 5.09a2 2 0 0 1 2.1-1.2l3.15.35a2 2 0 0 1 1.7 1.44l.73 2.58a2 2 0 0 1-.57 1.95l-1.2 1.2a14.3 14.3 0 0 0 4.03 4.03l1.2-1.2a2 2 0 0 1 1.95-.57l2.58.73a2 2 0 0 1 1.44 1.7l.35 3.15a2 2 0 0 1-1.2 2.1 6.65 6.65 0 0 1-2.73.6C8.91 22 2 15.09 2 6.82c0-.95.2-1.87.6-2.73a1 1 0 0 1 1.05-.6Z" />
                   </svg>
                   <span id="quickConnectionLabel" class="sr-only">Sohbete Bağlan</span>
                 </button>
@@ -286,8 +286,67 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Lobby Page -->
             <section id="lobbyPage" class="stage-page min-h-0 h-full">
-              <strong id="memberCount" class="hidden">0</strong>
-              <div id="participantGrid" class="participant-stage-grid participant-stage-grid--full h-full"></div>
+              <div class="lobby-stage-shell h-full min-h-0">
+                <section class="lobby-stage-main min-h-0">
+                  <strong id="memberCount" class="hidden">0</strong>
+                  <div id="participantGrid" class="participant-stage-grid participant-stage-grid--full h-full"></div>
+                  <div id="participantHoverControls" class="participant-hover-controls" aria-label="Sahne Kontrolleri">
+                    <button class="participant-hover-control" type="button" data-quick-control="mic" title="Mikrofon" aria-label="Mikrofon">
+                      <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-6 6.93V20h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 0 0 10 0Z" />
+                      </svg>
+                      <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0ZM2.3 20.3a1 1 0 1 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z" />
+                      </svg>
+                    </button>
+                    <button class="participant-hover-control" type="button" data-quick-control="camera" title="Kamera" aria-label="Kamera">
+                      <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M17 7a2 2 0 0 1 2 2v1.18l2.22-1.33A1 1 0 0 1 23 9.7v4.6a1 1 0 0 1-1.78.85L19 13.82V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h12Z" />
+                      </svg>
+                      <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M17 7a2 2 0 0 1 2 2v1.18l2.22-1.33A1 1 0 0 1 23 9.7v4.6a1 1 0 0 1-1.78.85L19 13.82V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h12Zm-13.7 13.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z" />
+                      </svg>
+                    </button>
+                    <button class="participant-hover-control" type="button" data-quick-control="screen" title="Ekran Paylaşımı" aria-label="Ekran Paylaşımı">
+                      <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 5h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v1h2a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h2v-1H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v9h16V7H4Z" />
+                      </svg>
+                      <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 5h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5v1h2a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2h2v-1H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v9h16V7H4Zm-.7 13.3a1 1 0 0 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z" />
+                      </svg>
+                    </button>
+                    <button class="participant-hover-control" type="button" data-quick-control="headphone" title="Kulaklık" aria-label="Kulaklık">
+                      <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 4a8 8 0 0 0-8 8v4a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6v-1a6 6 0 1 1 12 0v1h-2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a3 3 0 0 0 3-3v-4a8 8 0 0 0-8-8Z" />
+                      </svg>
+                      <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4ZM20 16v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Zm-16.7 4.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z" />
+                      </svg>
+                    </button>
+                    <button class="participant-hover-control participant-hover-control--connection" type="button" data-quick-control="connection" title="Sohbet Bağlantısı" aria-label="Sohbet Bağlantısı">
+                      <svg class="icon-on w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M3.65 5.09a2 2 0 0 1 2.1-1.2l3.15.35a2 2 0 0 1 1.7 1.44l.73 2.58a2 2 0 0 1-.57 1.95l-1.2 1.2a14.3 14.3 0 0 0 4.03 4.03l1.2-1.2a2 2 0 0 1 1.95-.57l2.58.73a2 2 0 0 1 1.44 1.7l.35 3.15a2 2 0 0 1-1.2 2.1 6.65 6.65 0 0 1-2.73.6C8.91 22 2 15.09 2 6.82c0-.95.2-1.87.6-2.73a1 1 0 0 1 1.05-.6Z" />
+                      </svg>
+                      <svg class="icon-off w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M3.65 5.09a2 2 0 0 1 2.1-1.2l3.15.35a2 2 0 0 1 1.7 1.44l.73 2.58a2 2 0 0 1-.57 1.95l-1.2 1.2a14.3 14.3 0 0 0 4.03 4.03l1.2-1.2a2 2 0 0 1 1.95-.57l2.58.73a2 2 0 0 1 1.44 1.7l.35 3.15a2 2 0 0 1-1.2 2.1 6.65 6.65 0 0 1-2.73.6C8.91 22 2 15.09 2 6.82c0-.95.2-1.87.6-2.73a1 1 0 0 1 1.05-.6Zm-.35 15.21a1 1 0 0 0 1.4 1.4l16-16a1 1 0 0 0-1.4-1.4l-16 16Z" />
+                      </svg>
+                    </button>
+                  </div>
+                </section>
+
+                <aside class="lobby-chat-panel" aria-label="Lobi Mesajlaşma">
+                  <header class="lobby-chat-header">
+                    <h3 class="lobby-chat-title">Lobi Sohbeti</h3>
+                    <p class="lobby-chat-subtitle">Mesajlar anlık güncellenir</p>
+                  </header>
+                  <ol id="lobbyChatList" class="lobby-chat-list" aria-live="polite"></ol>
+                  <form id="lobbyChatForm" class="lobby-chat-form">
+                    <label for="lobbyChatInput" class="sr-only">Mesaj</label>
+                    <textarea id="lobbyChatInput" class="lobby-chat-input" rows="2" maxlength="1200" placeholder="Lobiye mesaj yaz"></textarea>
+                    <button id="lobbyChatSendButton" class="btn-primary lobby-chat-send" type="submit">Gönder</button>
+                  </form>
+                </aside>
+              </div>
             </section>
 
             <!-- Users Page -->

@@ -1,4 +1,5 @@
 import type {
+  LobbyChatMessage,
   LobbyMember,
   MediaProducerPayload,
   RtcSignalPayload,
@@ -22,6 +23,8 @@ export type RealtimeEvent =
   | { type: "lobby-member-joined"; member: LobbyMember; revision?: number }
   | { type: "lobby-member-updated"; member: LobbyMember; revision?: number }
   | { type: "lobby-member-left"; userId: string; revision?: number }
+  | { type: "lobby-chat-history"; messages: LobbyChatMessage[] }
+  | { type: "lobby-message"; chatMessage: LobbyChatMessage }
   | { type: "media-producer-available"; payload: MediaProducerPayload }
   | { type: "media-producer-closed"; payload: MediaProducerPayload }
   | { type: "system-error"; code: string; message: string }
@@ -231,10 +234,11 @@ export class RealtimeClient {
       type?: string;
       members?: LobbyMember[];
       member?: LobbyMember;
+      messages?: LobbyChatMessage[];
+      message?: unknown;
       userId?: string;
       revision?: number;
       code?: string;
-      message?: string;
     };
 
     const eventType = typeof source.type === "string" ? source.type : "";
@@ -295,6 +299,26 @@ export class RealtimeClient {
       }
 
       this.onEvent?.(event);
+      return;
+    }
+
+    if (eventType === "lobby-chat-history" && Array.isArray(source.messages)) {
+      this.onEvent?.({
+        type: "lobby-chat-history",
+        messages: source.messages,
+      });
+      return;
+    }
+
+    if (
+      eventType === "lobby-message" &&
+      typeof source.message === "object" &&
+      source.message !== null
+    ) {
+      this.onEvent?.({
+        type: "lobby-message",
+        chatMessage: source.message as LobbyChatMessage,
+      });
       return;
     }
 

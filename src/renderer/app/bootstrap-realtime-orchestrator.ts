@@ -1,4 +1,7 @@
-import type { RtcSignalPayload } from "../../shared/contracts";
+import type {
+  LobbyChatMessage,
+  RtcSignalPayload,
+} from "../../shared/contracts";
 import { subscribeRealtimeEvents } from "../features/realtime/realtime-controller";
 import type { LobbyMemberSnapshot } from "../types/desktop-api";
 
@@ -36,6 +39,8 @@ interface BootstrapRealtimeOrchestratorDeps {
   onMemberJoinedApplied: (member: LobbyMemberSnapshot) => void;
   onMemberUpdatedApplied: (member: LobbyMemberSnapshot) => void;
   onMemberLeftApplied: (userId: string) => void;
+  onLobbyChatHistoryApplied: (messages: LobbyChatMessage[]) => void;
+  onLobbyMessageApplied: (message: LobbyChatMessage) => void;
   onRtcSignal: (payload: RtcSignalPayload) => void;
   onProducerAvailable: (payload: ProducerAvailablePayload) => void;
   onProducerClosed: (producerId: string) => void;
@@ -144,6 +149,12 @@ export const subscribeBootstrapRealtimeOrchestrator = (
 
       deps.setStatus("Bir üye lobiden ayrıldı", false);
       deps.onMemberLeftApplied(userId);
+    },
+    onLobbyChatHistory: (messages) => {
+      deps.onLobbyChatHistoryApplied(messages);
+    },
+    onLobbyMessage: (message) => {
+      deps.onLobbyMessageApplied(message);
     },
     onAutoRejoin: () => {
       deps.setStatus("Bağlantı geri geldi, lobi üyeliği yenilendi", false);

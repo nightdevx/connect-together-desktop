@@ -23,6 +23,12 @@ interface RemoteVideoEntry {
   label: HTMLDivElement;
 }
 
+interface ExpandedVideoSelection {
+  key: string;
+  userId: string;
+  sourceType: MediaSourceType;
+}
+
 export interface RemoteMediaUiController {
   attachRemoteTrack: (payload: {
     key: string;
@@ -70,7 +76,7 @@ export const createRemoteMediaUiController = (
   let outputMuted = false;
   let remoteAudioContext: AudioContext | null = null;
 
-  let expandedVideoKey: string | null = null;
+  let expandedVideoSelection: ExpandedVideoSelection | null = null;
 
   const clampParticipantVolume = (value: number): number => {
     if (!Number.isFinite(value)) {
@@ -374,6 +380,38 @@ export const createRemoteMediaUiController = (
     slot.appendChild(placeholder);
   };
 
+  const resolveExpandedVideoEntry = (): RemoteVideoEntry | null => {
+    if (!expandedVideoSelection) {
+      return null;
+    }
+
+    const entryByKey = remoteVideoMap.get(expandedVideoSelection.key);
+    if (entryByKey) {
+      expandedVideoSelection = {
+        key: expandedVideoSelection.key,
+        userId: entryByKey.userId,
+        sourceType: entryByKey.sourceType,
+      };
+      return entryByKey;
+    }
+
+    for (const [key, entry] of remoteVideoMap.entries()) {
+      if (
+        entry.userId === expandedVideoSelection.userId &&
+        entry.sourceType === expandedVideoSelection.sourceType
+      ) {
+        expandedVideoSelection = {
+          key,
+          userId: entry.userId,
+          sourceType: entry.sourceType,
+        };
+        return entry;
+      }
+    }
+
+    return null;
+  };
+
   const applyExpandedMediaState = (): void => {
     for (const card of Array.from(
       deps.dom.participantGrid.querySelectorAll<HTMLElement>(
@@ -387,14 +425,21 @@ export const createRemoteMediaUiController = (
       entry.container.classList.remove("is-expanded");
     }
 
-    if (!expandedVideoKey) {
+    delete deps.dom.participantGrid.dataset.otherCount;
+
+    if (!expandedVideoSelection) {
       deps.dom.participantGrid.classList.remove("has-expanded-media");
       return;
     }
 
-    const expandedEntry = remoteVideoMap.get(expandedVideoKey);
-    if (!expandedEntry || !expandedEntry.container.isConnected) {
-      expandedVideoKey = null;
+    const expandedEntry = resolveExpandedVideoEntry();
+    if (!expandedEntry) {
+      expandedVideoSelection = null;
+      deps.dom.participantGrid.classList.remove("has-expanded-media");
+      return;
+    }
+
+    if (!expandedEntry.container.isConnected) {
       deps.dom.participantGrid.classList.remove("has-expanded-media");
       return;
     }
@@ -402,7 +447,6 @@ export const createRemoteMediaUiController = (
     const spotlightCard =
       expandedEntry.container.closest<HTMLElement>(".participant-card");
     if (!spotlightCard) {
-      expandedVideoKey = null;
       deps.dom.participantGrid.classList.remove("has-expanded-media");
       return;
     }
@@ -410,11 +454,16 @@ export const createRemoteMediaUiController = (
     deps.dom.participantGrid.classList.add("has-expanded-media");
     expandedEntry.container.classList.add("is-expanded");
 
-    for (const card of Array.from(
+    const stageCards = Array.from(
       deps.dom.participantGrid.querySelectorAll<HTMLElement>(
         ".participant-card",
       ),
-    )) {
+    );
+    deps.dom.participantGrid.dataset.otherCount = String(
+      Math.max(0, stageCards.length - 1),
+    );
+
+    for (const card of stageCards) {
       if (card === spotlightCard) {
         card.classList.add("is-spotlight");
       } else {
@@ -447,8 +496,6 @@ export const createRemoteMediaUiController = (
     if (entry.container.parentElement !== slot) {
       slot.appendChild(entry.container);
     }
-
-    applyExpandedMediaState();
   };
 
   const formatRemoteConsumerLabel = (
@@ -550,8 +597,10 @@ export const createRemoteMediaUiController = (
       const fullscreenButton = document.createElement("button");
       fullscreenButton.type = "button";
       fullscreenButton.className = "participant-stream-fullscreen-button";
-      fullscreenButton.title = "Tam ekran";
-      fullscreenButton.textContent = "Tam ekran";
+      fullscreenButton.title = "Tam ekrana gec";
+      fullscreenButton.setAttribute("aria-label", "Tam ekrana gec");
+      fullscreenButton.innerHTML =
+        '<svg viewBox="0 0 24 24" class="w-4 h-4 fill-current" aria-hidden="true" focusable="false"><path d="M4 9a1 1 0 0 0 2 0V6h3a1 1 0 1 0 0-2H5a1 1 0 0 0-1 1v4Zm15 0a1 1 0 1 0 2 0V5a1 1 0 0 0-1-1h-4a1 1 0 1 0 0 2h3v3ZM4 15a1 1 0 0 1 2 0v3h3a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1v-4Zm16 0a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1h-4a1 1 0 1 1 0-2h3v-3Z"/></svg>';
 
       fullscreenButton.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -563,8 +612,10 @@ export const createRemoteMediaUiController = (
       const exitFullscreenButton = document.createElement("button");
       exitFullscreenButton.type = "button";
       exitFullscreenButton.className = "participant-stream-exit-fullscreen";
-      exitFullscreenButton.title = "Kucuk ekran";
-      exitFullscreenButton.textContent = "Kucuk ekran";
+      exitFullscreenButton.title = "Tam ekrandan cik";
+      exitFullscreenButton.setAttribute("aria-label", "Tam ekrandan cik");
+      exitFullscreenButton.innerHTML =
+        '<svg viewBox="0 0 24 24" class="w-4 h-4 fill-current" aria-hidden="true" focusable="false"><path d="M9 4a1 1 0 0 1 0 2H7.41L10 8.59A1 1 0 0 1 8.59 10L6 7.41V9a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1h4Zm6 0a1 1 0 1 0 0 2h1.59L14 8.59A1 1 0 0 0 15.41 10L18 7.41V9a1 1 0 1 0 2 0V5a1 1 0 0 0-1-1h-4Zm-5 11.41L7.41 18H9a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v1.59L8.59 14A1 1 0 0 1 10 15.41Zm4 0L16.59 18H15a1 1 0 1 0 0 2h4a1 1 0 0 0 1-1v-4a1 1 0 1 0-2 0v1.59L15.41 14A1 1 0 1 0 14 15.41Z"/></svg>';
 
       exitFullscreenButton.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -583,7 +634,15 @@ export const createRemoteMediaUiController = (
           return;
         }
 
-        expandedVideoKey = expandedVideoKey === key ? null : key;
+        const selectedEntry = remoteVideoMap.get(key);
+        const isSameSelection = expandedVideoSelection?.key === key;
+        expandedVideoSelection = isSameSelection
+          ? null
+          : {
+              key,
+              userId: selectedEntry?.userId ?? userId,
+              sourceType: selectedEntry?.sourceType ?? sourceType,
+            };
         applyExpandedMediaState();
       });
 
@@ -602,6 +661,7 @@ export const createRemoteMediaUiController = (
     existing.label.textContent = labelText;
     existing.video.srcObject = stream;
     attachVideoEntryToSlot(existing);
+    applyExpandedMediaState();
     syncFullscreenState();
   };
 
@@ -643,8 +703,27 @@ export const createRemoteMediaUiController = (
     existing.container.remove();
     remoteVideoMap.delete(key);
 
-    if (expandedVideoKey === key) {
-      expandedVideoKey = null;
+    if (expandedVideoSelection?.key === key) {
+      let replacement: ExpandedVideoSelection | null = null;
+      for (const [replacementKey, entry] of remoteVideoMap.entries()) {
+        if (replacementKey === key) {
+          continue;
+        }
+
+        if (
+          entry.userId === existing.userId &&
+          entry.sourceType === existing.sourceType
+        ) {
+          replacement = {
+            key: replacementKey,
+            userId: entry.userId,
+            sourceType: entry.sourceType,
+          };
+          break;
+        }
+      }
+
+      expandedVideoSelection = replacement;
     }
 
     if (parent?.dataset.participantMediaSlot) {
@@ -791,7 +870,7 @@ export const createRemoteMediaUiController = (
       remoteAudioContext = null;
     }
 
-    expandedVideoKey = null;
+    expandedVideoSelection = null;
     applyExpandedMediaState();
     syncFullscreenState();
   };

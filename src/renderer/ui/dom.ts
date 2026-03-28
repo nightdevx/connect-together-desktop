@@ -63,6 +63,10 @@ export interface DomRefs {
   connectionDiagEncryption: HTMLElement;
   connectionDiagLearnMore: HTMLButtonElement;
   participantGrid: HTMLElement;
+  lobbyChatList: HTMLOListElement;
+  lobbyChatForm: HTMLFormElement;
+  lobbyChatInput: HTMLTextAreaElement;
+  lobbyChatSendButton: HTMLButtonElement;
   remoteAudioContainer: HTMLElement;
   outputVolume: HTMLInputElement;
   outputVolumeValue: HTMLElement;
@@ -235,6 +239,12 @@ export const queryDomRefs = (): DomRefs => {
       "connectionDiagLearnMore",
     ),
     participantGrid: requireElement("participantGrid"),
+    lobbyChatList: requireElement<HTMLOListElement>("lobbyChatList"),
+    lobbyChatForm: requireElement<HTMLFormElement>("lobbyChatForm"),
+    lobbyChatInput: requireElement<HTMLTextAreaElement>("lobbyChatInput"),
+    lobbyChatSendButton: requireElement<HTMLButtonElement>(
+      "lobbyChatSendButton",
+    ),
     remoteAudioContainer: requireElement("remoteAudioContainer"),
     outputVolume: requireElement<HTMLInputElement>("outputVolume"),
     outputVolumeValue: requireElement("outputVolumeValue"),

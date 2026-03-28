@@ -79,6 +79,12 @@ const desktopApi: DesktopApi = {
   getLobbyState: async () => {
     return ipcRenderer.invoke("desktop:lobby-state");
   },
+  chatListLobbyMessages: async (payload) => {
+    return ipcRenderer.invoke("desktop:chat-list-lobby-messages", payload);
+  },
+  chatSendLobbyMessage: async (payload) => {
+    return ipcRenderer.invoke("desktop:chat-send-lobby-message", payload);
+  },
   realtimeConnect: async () => {
     return ipcRenderer.invoke("desktop:realtime-connect");
   },

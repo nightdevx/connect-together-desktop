@@ -1,7 +1,11 @@
-import type { RtcSignalPayload } from "../../shared/contracts";
+import type {
+  LobbyChatMessage,
+  RtcSignalPayload,
+} from "../../shared/contracts";
 import { createAuthViewController } from "../features/auth/auth-view-controller";
 import { createUiSoundController } from "../features/audio/ui-sound-controller";
 import { createLobbyController } from "../features/lobby/lobby-controller";
+import { createLobbyChatController } from "../features/lobby/lobby-chat-controller";
 import { createVoiceController } from "../features/voice/voice-controller";
 import { createUpdaterViewController } from "../features/updater/updater-view-controller";
 import { createWorkspaceController } from "../features/workspace/workspace-controller";
@@ -188,6 +192,116 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     { cameraEnabled: boolean; screenSharing: boolean }
   >();
 
+  const participantHoverControls = document.getElementById(
+    "participantHoverControls",
+  );
+  const participantHoverControlButtons = participantHoverControls
+    ? Array.from(
+        participantHoverControls.querySelectorAll<HTMLButtonElement>(
+          "[data-quick-control]",
+        ),
+      )
+    : [];
+
+  const resolveQuickControlSourceButton = (
+    quickControl: string,
+  ): HTMLButtonElement | null => {
+    switch (quickControl) {
+      case "mic":
+        return dom.quickMicToggle;
+      case "camera":
+        return dom.quickCameraToggle;
+      case "screen":
+        return dom.quickScreenToggle;
+      case "headphone":
+        return dom.quickHeadphoneToggle;
+      case "connection":
+        return dom.quickConnectionToggle;
+      default:
+        return null;
+    }
+  };
+
+  const syncParticipantHoverControl = (button: HTMLButtonElement): void => {
+    const quickControl = button.dataset.quickControl;
+    if (!quickControl) {
+      return;
+    }
+
+    const sourceButton = resolveQuickControlSourceButton(quickControl);
+    if (!sourceButton) {
+      return;
+    }
+
+    button.classList.toggle(
+      "active",
+      sourceButton.classList.contains("active"),
+    );
+    button.classList.toggle(
+      "danger",
+      sourceButton.classList.contains("danger"),
+    );
+    button.disabled = sourceButton.disabled;
+    button.title = sourceButton.title;
+    button.setAttribute("aria-label", sourceButton.title);
+
+    const stateText = sourceButton.dataset.stateText ?? "OFF";
+    button.dataset.stateText = stateText;
+    button.setAttribute("aria-pressed", stateText === "ON" ? "true" : "false");
+  };
+
+  const syncParticipantHoverControls = (): void => {
+    for (const button of participantHoverControlButtons) {
+      syncParticipantHoverControl(button);
+    }
+  };
+
+  const bindParticipantHoverControls = (): void => {
+    if (participantHoverControlButtons.length === 0) {
+      return;
+    }
+
+    for (const button of participantHoverControlButtons) {
+      button.addEventListener("click", () => {
+        const quickControl = button.dataset.quickControl;
+        if (!quickControl) {
+          return;
+        }
+
+        const sourceButton = resolveQuickControlSourceButton(quickControl);
+        if (!sourceButton || sourceButton.disabled) {
+          return;
+        }
+
+        sourceButton.click();
+      });
+    }
+
+    const stateObserver = new MutationObserver(() => {
+      syncParticipantHoverControls();
+    });
+
+    const sourceButtons = [
+      dom.quickMicToggle,
+      dom.quickCameraToggle,
+      dom.quickScreenToggle,
+      dom.quickHeadphoneToggle,
+      dom.quickConnectionToggle,
+    ];
+
+    for (const sourceButton of sourceButtons) {
+      stateObserver.observe(sourceButton, {
+        attributes: true,
+        attributeFilter: ["class", "data-state-text", "disabled", "title"],
+      });
+    }
+
+    syncParticipantHoverControls();
+    lifecycle.add(() => {
+      stateObserver.disconnect();
+    });
+  };
+
   try {
     uiSoundsEnabled = localStorage.getItem(UI_SOUNDS_STORAGE_KEY) !== "0";
     rnnoiseEnabled = localStorage.getItem(RNNOISE_ENABLED_STORAGE_KEY) !== "0";
@@ -297,13 +411,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return true;
     }
 
-    const mutedInfoPatterns = [
-      /Lobiye bir üye katıldı/i,
-      /Bir üye lobiden ayrıldı/i,
-      /Lobi güncellemeleri websocket üzerinden alınıyor/i,
+    const allowedInfoPatterns = [
+      /Giriş başarılı/i,
+      /Kayıt ve giriş başarılı/i,
+      /Profil bilgileri güncellendi/i,
+      /Şifre başarıyla güncellendi/i,
+      /Çıkış yapıldı/i,
+      /Yeni sürüm/i,
+      /Uygulama güncel/i,
+      /Uygulama güncelleme için yeniden başlatılıyor/i,
+      /Uygulama yeniden baslatiliyor/i,
     ];
 
-    if (mutedInfoPatterns.some((pattern) => pattern.test(message))) {
+    if (!allowedInfoPatterns.some((pattern) => pattern.test(message))) {
       return false;
     }
 
@@ -479,6 +599,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   });
 
   const lobbyController = createLobbyController(dom);
+  const lobbyChatController = createLobbyChatController(dom);
+  lobbyChatController.clear();
+  lobbyChatController.setSending(false);
   const syncDisplayNameMapFromUsers = (
     users: RegisteredUserSnapshot[],
   ): void => {
@@ -491,6 +614,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     lobbyController.setDisplayNameMap(displayNameByUserId);
+    lobbyChatController.setDisplayNameMap(displayNameByUserId);
   };
 
   const applyLocalDisplayName = (userId: string, displayName: string): void => {
@@ -502,6 +626,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     lobbyController.setDisplayNameMap(displayNameByUserId);
+    lobbyChatController.setDisplayNameMap(displayNameByUserId);
   };
 
   const directoryController = createDirectoryController({
@@ -1433,6 +1558,52 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       setStatus("Lobi güncellemeleri websocket üzerinden alınıyor", false);
     }
   };
+
+  const loadLobbyChatHistory = async (silent = true): Promise<void> => {
+    const result = await window.desktopApi.chatListLobbyMessages({
+      limit: 80,
+    });
+
+    if (!result.ok || !result.data) {
+      if (!silent) {
+        setStatus(
+          `Lobi sohbet geçmişi alınamadı: ${getErrorMessage(result.error)}`,
+          true,
+        );
+      }
+      return;
+    }
+
+    lobbyChatController.replaceMessages(result.data.messages);
+  };
+
+  const sendLobbyChatMessage = async (body: string): Promise<void> => {
+    const normalizedBody = body.trim();
+    if (normalizedBody.length === 0) {
+      return;
+    }
+
+    lobbyChatController.setSending(true);
+    try {
+      const result = await window.desktopApi.chatSendLobbyMessage({
+        body: normalizedBody,
+      });
+
+      if (!result.ok || !result.data) {
+        setStatus(
+          `Mesaj gönderilemedi: ${getErrorMessage(result.error)}`,
+          true,
+        );
+        return;
+      }
+
+      dom.lobbyChatInput.value = "";
+      lobbyChatController.appendMessage(result.data.message);
+    } finally {
+      lobbyChatController.setSending(false);
+    }
+  };
+
   const connectToChat = async (): Promise<boolean> => {
     const joinStartedAt = performance.now();
 
@@ -1663,6 +1834,12 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       directoryController.renderUserDirectory();
       voiceController.onMemberLeft(userId);
     },
+    onLobbyChatHistoryApplied: (messages: LobbyChatMessage[]) => {
+      lobbyChatController.replaceMessages(messages);
+    },
+    onLobbyMessageApplied: (message: LobbyChatMessage) => {
+      lobbyChatController.appendMessage(message);
+    },
     onRtcSignal: (payload: RtcSignalPayload) => {
       void voiceController.handleIncomingSignal(payload);
     },
@@ -1799,6 +1976,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   });
 
+  dom.lobbyChatForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void sendLobbyChatMessage(dom.lobbyChatInput.value);
+  });
+
   bindVoiceSettingsControls({
     dom,
     onQuickMicToggle: async () => {
@@ -1925,6 +2107,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     },
   });
 
+  bindParticipantHoverControls();
+
   lifecycle.on(window, "keydown", (event) => {
     const keyboardEvent = event as KeyboardEvent;
     if (keyboardEvent.key === "Escape") {
@@ -1941,6 +2125,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     await loadProfileFromBackend();
     await directoryController.refreshRegisteredUsers(true);
     await refreshLobby();
+    await loadLobbyChatHistory(true);
   };
 
   bindAuthAndProfileForms({
@@ -1951,6 +2136,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     renderSession: authController.renderSession,
     setSelfUserId: (userId) => {
       selfUserId = userId;
+      lobbyChatController.setSelfUserId(userId);
     },
     onSessionAuthenticated: async () => {
       workspaceController.setWorkspacePage("lobby");
@@ -1985,8 +2171,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       directoryController.stopFriendsPresenceAutoRefresh();
       authController.renderSession(session);
       selfUserId = null;
+      lobbyChatController.setSelfUserId(null);
       displayNameByUserId.clear();
       lobbyController.setDisplayNameMap(displayNameByUserId);
+      lobbyChatController.setDisplayNameMap(displayNameByUserId);
+      lobbyChatController.clear();
       directoryController.clearUsers();
       closeParticipantAudioMenu();
       directoryController.renderUserDirectory();
@@ -2004,10 +2193,13 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     renderSession: authController.renderSession,
     setSelfUserId: (userId) => {
       selfUserId = userId;
+      lobbyChatController.setSelfUserId(userId);
     },
     onAuthenticatedSession: handleAuthenticatedSession,
     onUnauthenticatedSession: () => {
       directoryController.stopFriendsPresenceAutoRefresh();
+      lobbyChatController.setSelfUserId(null);
+      lobbyChatController.clear();
     },
     addCleanup: (cleanup) => {
       lifecycle.add(cleanup);

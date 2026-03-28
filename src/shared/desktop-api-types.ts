@@ -1,5 +1,6 @@
 import type {
   ChangePasswordRequest,
+  LobbyChatMessage,
   LobbyMember,
   LoginRequest,
   MediaProducerKind,
@@ -90,6 +91,8 @@ export interface DesktopRealtimeEvent {
   connected?: boolean;
   members?: LobbyMemberSnapshot[];
   member?: LobbyMemberSnapshot;
+  messages?: LobbyChatMessage[];
+  chatMessage?: LobbyChatMessage;
   payload?: RtcSignalPayload & {
     producerId?: string;
     userId?: string;
@@ -139,6 +142,12 @@ export interface DesktopApi {
     payload: ChangePasswordRequest,
   ) => Promise<DesktopResult<{ changed: boolean }>>;
   getLobbyState: () => Promise<DesktopResult<LobbyStateSnapshot>>;
+  chatListLobbyMessages: (payload?: {
+    limit?: number;
+  }) => Promise<DesktopResult<{ messages: LobbyChatMessage[] }>>;
+  chatSendLobbyMessage: (payload: {
+    body: string;
+  }) => Promise<DesktopResult<{ message: LobbyChatMessage }>>;
   realtimeConnect: () => Promise<DesktopResult<{ connected: boolean }>>;
   lobbyJoin: () => Promise<DesktopResult<{ accepted: boolean }>>;
   lobbyLeave: () => Promise<DesktopResult<{ accepted: boolean }>>;
