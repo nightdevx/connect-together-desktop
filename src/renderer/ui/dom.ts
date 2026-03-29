@@ -38,8 +38,20 @@ export interface DomRefs {
   currentUser: HTMLElement;
   memberCount: HTMLElement;
   members: HTMLUListElement;
+  lobbiesList: HTMLUListElement;
+  lobbyCreateForm: HTMLFormElement;
+  lobbyCreateInput: HTMLInputElement;
+  lobbyCreateButton: HTMLButtonElement;
   usersDirectoryCount: HTMLElement;
+  usersSidebarDirectoryList: HTMLUListElement;
   usersDirectoryList: HTMLUListElement;
+  usersPageDirectorySection: HTMLElement;
+  directMessageSection: HTMLElement;
+  directMessageTitle: HTMLElement;
+  directMessageList: HTMLOListElement;
+  directMessageForm: HTMLFormElement;
+  directMessageInput: HTMLTextAreaElement;
+  directMessageSendButton: HTMLButtonElement;
   quickMicToggle: HTMLButtonElement;
   quickCameraToggle: HTMLButtonElement;
   quickScreenToggle: HTMLButtonElement;
@@ -62,6 +74,11 @@ export interface DomRefs {
   connectionDiagHint: HTMLElement;
   connectionDiagEncryption: HTMLElement;
   connectionDiagLearnMore: HTMLButtonElement;
+  lobbyStageShell: HTMLElement;
+  lobbyChatPanel: HTMLElement;
+  lobbyChatToggleButton: HTMLButtonElement;
+  lobbyChatReopenButton: HTMLButtonElement;
+  lobbyJoinEmptyState: HTMLElement;
   participantGrid: HTMLElement;
   lobbyChatList: HTMLOListElement;
   lobbyChatForm: HTMLFormElement;
@@ -110,11 +127,16 @@ export interface DomRefs {
   participantAudioMenu: HTMLElement;
   participantAudioMenuTitle: HTMLElement;
   participantAudioMuteToggle: HTMLButtonElement;
+  participantAudioDirectMessage: HTMLButtonElement;
   participantAudioVolumeSlider: HTMLInputElement;
   participantAudioVolumeValue: HTMLElement;
   participantAudioPreset100: HTMLButtonElement;
   participantAudioPreset150: HTMLButtonElement;
   participantAudioPreset200: HTMLButtonElement;
+  lobbyContextMenu: HTMLElement;
+  lobbyContextMenuTitle: HTMLElement;
+  lobbyContextRename: HTMLButtonElement;
+  lobbyContextDelete: HTMLButtonElement;
   profileForm: HTMLFormElement;
   profileDisplayName: HTMLInputElement;
   profileEmail: HTMLInputElement;
@@ -198,8 +220,25 @@ export const queryDomRefs = (): DomRefs => {
     currentUser: requireElement("currentUser"),
     memberCount: requireElement("memberCount"),
     members: requireElement<HTMLUListElement>("members"),
+    lobbiesList: requireElement<HTMLUListElement>("lobbiesList"),
+    lobbyCreateForm: requireElement<HTMLFormElement>("lobbyCreateForm"),
+    lobbyCreateInput: requireElement<HTMLInputElement>("lobbyCreateInput"),
+    lobbyCreateButton: requireElement<HTMLButtonElement>("lobbyCreateButton"),
     usersDirectoryCount: requireElement("usersDirectoryCount"),
+    usersSidebarDirectoryList: requireElement<HTMLUListElement>(
+      "usersSidebarDirectoryList",
+    ),
     usersDirectoryList: requireElement<HTMLUListElement>("usersDirectoryList"),
+    usersPageDirectorySection: requireElement("usersPageDirectorySection"),
+    directMessageSection: requireElement("directMessageSection"),
+    directMessageTitle: requireElement("directMessageTitle"),
+    directMessageList: requireElement<HTMLOListElement>("directMessageList"),
+    directMessageForm: requireElement<HTMLFormElement>("directMessageForm"),
+    directMessageInput:
+      requireElement<HTMLTextAreaElement>("directMessageInput"),
+    directMessageSendButton: requireElement<HTMLButtonElement>(
+      "directMessageSendButton",
+    ),
     quickMicToggle: requireElement<HTMLButtonElement>("quickMicToggle"),
     quickCameraToggle: requireElement<HTMLButtonElement>("quickCameraToggle"),
     quickScreenToggle: requireElement<HTMLButtonElement>("quickScreenToggle"),
@@ -238,6 +277,15 @@ export const queryDomRefs = (): DomRefs => {
     connectionDiagLearnMore: requireElement<HTMLButtonElement>(
       "connectionDiagLearnMore",
     ),
+    lobbyStageShell: requireElement("lobbyStageShell"),
+    lobbyChatPanel: requireElement("lobbyChatPanel"),
+    lobbyChatToggleButton: requireElement<HTMLButtonElement>(
+      "lobbyChatToggleButton",
+    ),
+    lobbyChatReopenButton: requireElement<HTMLButtonElement>(
+      "lobbyChatReopenButton",
+    ),
+    lobbyJoinEmptyState: requireElement("lobbyJoinEmptyState"),
     participantGrid: requireElement("participantGrid"),
     lobbyChatList: requireElement<HTMLOListElement>("lobbyChatList"),
     lobbyChatForm: requireElement<HTMLFormElement>("lobbyChatForm"),
@@ -320,6 +368,9 @@ export const queryDomRefs = (): DomRefs => {
     participantAudioMuteToggle: requireElement<HTMLButtonElement>(
       "participantAudioMuteToggle",
     ),
+    participantAudioDirectMessage: requireElement<HTMLButtonElement>(
+      "participantAudioDirectMessage",
+    ),
     participantAudioVolumeSlider: requireElement<HTMLInputElement>(
       "participantAudioVolumeSlider",
     ),
@@ -333,6 +384,10 @@ export const queryDomRefs = (): DomRefs => {
     participantAudioPreset200: requireElement<HTMLButtonElement>(
       "participantAudioPreset200",
     ),
+    lobbyContextMenu: requireElement("lobbyContextMenu"),
+    lobbyContextMenuTitle: requireElement("lobbyContextMenuTitle"),
+    lobbyContextRename: requireElement<HTMLButtonElement>("lobbyContextRename"),
+    lobbyContextDelete: requireElement<HTMLButtonElement>("lobbyContextDelete"),
     profileForm: requireElement<HTMLFormElement>("profileForm"),
     profileDisplayName: requireElement<HTMLInputElement>("profileDisplayName"),
     profileEmail: requireElement<HTMLInputElement>("profileEmail"),

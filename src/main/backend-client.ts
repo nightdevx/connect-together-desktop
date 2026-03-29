@@ -1,6 +1,7 @@
 import type {
   ChangePasswordRequest,
   LobbyChatMessage,
+  LobbyDescriptor,
   LoginRequest,
   MediaProducerKind,
   MediaSourceType,
@@ -27,6 +28,7 @@ interface ErrorResponse {
 }
 
 export interface LobbyStateResponse {
+  lobbyId?: string;
   members: Array<{
     userId: string;
     username: string;
@@ -45,6 +47,24 @@ export interface LobbyStateResponse {
 
 export interface LobbyActionResponse {
   accepted: boolean;
+  lobbyId?: string;
+}
+
+export interface LobbyListResponse {
+  lobbies: LobbyDescriptor[];
+}
+
+export interface LobbyCreateResponse {
+  lobby: LobbyDescriptor;
+}
+
+export interface LobbyUpdateResponse {
+  lobby: LobbyDescriptor;
+}
+
+export interface LobbyDeleteResponse {
+  deleted: boolean;
+  lobbyId?: string;
 }
 
 export interface LobbyChatListResponse {
@@ -97,6 +117,17 @@ export interface LiveKitTokenResponse {
   name: string;
   token: string;
   expiresAt: string;
+  mediaPolicy?: {
+    qualityProfile?: "balanced" | "high" | "low-bandwidth";
+    preferredVideoCodec: string;
+    backupVideoCodec: string;
+    cameraMaxBitrate: number;
+    cameraMaxFps: number;
+    screenMaxBitrate: number;
+    screenMaxFps: number;
+    simulcast: boolean;
+    dynacast: boolean;
+  };
 }
 
 export interface ProfileResponse {
@@ -198,7 +229,19 @@ export class BackendClient {
   }
 
   public async getLobbyState(accessToken: string): Promise<LobbyStateResponse> {
-    return this.request<LobbyStateResponse>("/lobby/state", {
+    return this.getLobbyStateFor(accessToken, undefined);
+  }
+
+  public async getLobbyStateFor(
+    accessToken: string,
+    lobbyId?: string,
+  ): Promise<LobbyStateResponse> {
+    const path = new URL("/lobby/state", this.baseUrl);
+    if (lobbyId && lobbyId.trim().length > 0) {
+      path.searchParams.set("lobbyId", lobbyId.trim());
+    }
+
+    return this.request<LobbyStateResponse>(`${path.pathname}${path.search}`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -206,11 +249,72 @@ export class BackendClient {
     });
   }
 
+  public async listLobbies(accessToken: string): Promise<LobbyListResponse> {
+    return this.request<LobbyListResponse>("/lobby/rooms", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  }
+
+  public async createLobby(
+    accessToken: string,
+    name: string,
+  ): Promise<LobbyCreateResponse> {
+    return this.request<LobbyCreateResponse>("/lobby/rooms", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  public async updateLobby(
+    accessToken: string,
+    lobbyId: string,
+    name: string,
+  ): Promise<LobbyUpdateResponse> {
+    const normalizedLobbyID = lobbyId.trim();
+    return this.request<LobbyUpdateResponse>(
+      `/lobby/rooms/${encodeURIComponent(normalizedLobbyID)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ name }),
+      },
+    );
+  }
+
+  public async deleteLobby(
+    accessToken: string,
+    lobbyId: string,
+  ): Promise<LobbyDeleteResponse> {
+    const normalizedLobbyID = lobbyId.trim();
+    return this.request<LobbyDeleteResponse>(
+      `/lobby/rooms/${encodeURIComponent(normalizedLobbyID)}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    );
+  }
+
   public async listLobbyMessages(
     accessToken: string,
+    lobbyId: string,
     limit?: number,
   ): Promise<LobbyChatListResponse> {
-    const path = new URL("/chat/lobby/messages", this.baseUrl);
+    const normalizedLobbyID = lobbyId.trim();
+    const path = new URL(
+      `/chat/lobbies/${encodeURIComponent(normalizedLobbyID)}/messages`,
+      this.baseUrl,
+    );
     if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
       path.searchParams.set("limit", `${Math.floor(limit)}`);
     }
@@ -228,71 +332,149 @@ export class BackendClient {
 
   public async sendLobbyMessage(
     accessToken: string,
+    lobbyId: string,
     body: string,
   ): Promise<LobbyChatSendResponse> {
-    return this.request<LobbyChatSendResponse>("/chat/lobby/messages", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+    const normalizedLobbyID = lobbyId.trim();
+    return this.request<LobbyChatSendResponse>(
+      `/chat/lobbies/${encodeURIComponent(normalizedLobbyID)}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ body }),
       },
-      body: JSON.stringify({ body }),
-    });
+    );
   }
 
-  public async joinLobby(accessToken: string): Promise<LobbyActionResponse> {
+  public async listDirectMessages(
+    accessToken: string,
+    peerUserId: string,
+    limit?: number,
+  ): Promise<LobbyChatListResponse> {
+    const normalizedPeerID = peerUserId.trim();
+    const path = new URL(
+      `/chat/direct/${encodeURIComponent(normalizedPeerID)}/messages`,
+      this.baseUrl,
+    );
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      path.searchParams.set("limit", `${Math.floor(limit)}`);
+    }
+
+    return this.request<LobbyChatListResponse>(
+      `${path.pathname}${path.search}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    );
+  }
+
+  public async sendDirectMessage(
+    accessToken: string,
+    peerUserId: string,
+    body: string,
+  ): Promise<LobbyChatSendResponse> {
+    const normalizedPeerID = peerUserId.trim();
+    return this.request<LobbyChatSendResponse>(
+      `/chat/direct/${encodeURIComponent(normalizedPeerID)}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ body }),
+      },
+    );
+  }
+
+  public async joinLobby(
+    accessToken: string,
+    lobbyId?: string,
+  ): Promise<LobbyActionResponse> {
     return this.request<LobbyActionResponse>("/lobby/join", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      body: JSON.stringify(
+        lobbyId && lobbyId.trim().length > 0 ? { lobbyId: lobbyId.trim() } : {},
+      ),
     });
   }
 
-  public async leaveLobby(accessToken: string): Promise<LobbyActionResponse> {
+  public async leaveLobby(
+    accessToken: string,
+    lobbyId?: string,
+  ): Promise<LobbyActionResponse> {
     return this.request<LobbyActionResponse>("/lobby/leave", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      body: JSON.stringify(
+        lobbyId && lobbyId.trim().length > 0 ? { lobbyId: lobbyId.trim() } : {},
+      ),
     });
   }
 
   public async setLobbyMute(
     accessToken: string,
     muted: boolean,
+    lobbyId?: string,
   ): Promise<LobbyActionResponse> {
     return this.request<LobbyActionResponse>("/lobby/mute", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ muted }),
+      body: JSON.stringify({
+        muted,
+        ...(lobbyId && lobbyId.trim().length > 0
+          ? { lobbyId: lobbyId.trim() }
+          : {}),
+      }),
     });
   }
 
   public async setLobbyDeafen(
     accessToken: string,
     deafened: boolean,
+    lobbyId?: string,
   ): Promise<LobbyActionResponse> {
     return this.request<LobbyActionResponse>("/lobby/deafen", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ deafened }),
+      body: JSON.stringify({
+        deafened,
+        ...(lobbyId && lobbyId.trim().length > 0
+          ? { lobbyId: lobbyId.trim() }
+          : {}),
+      }),
     });
   }
 
   public async setLobbySpeaking(
     accessToken: string,
     speaking: boolean,
+    lobbyId?: string,
   ): Promise<LobbyActionResponse> {
     return this.request<LobbyActionResponse>("/lobby/speaking", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ speaking }),
+      body: JSON.stringify({
+        speaking,
+        ...(lobbyId && lobbyId.trim().length > 0
+          ? { lobbyId: lobbyId.trim() }
+          : {}),
+      }),
     });
   }
 

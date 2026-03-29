@@ -21,6 +21,7 @@ interface RemoteVideoEntry {
   container: HTMLDivElement;
   video: HTMLVideoElement;
   label: HTMLDivElement;
+  liveKitTrack: any | null;
 }
 
 interface ExpandedVideoSelection {
@@ -35,7 +36,8 @@ export interface RemoteMediaUiController {
     userId: string;
     kind: "audio" | "video";
     sourceType: MediaSourceType;
-    stream: MediaStream;
+    stream?: MediaStream;
+    trackRef?: any;
   }) => void;
   updateRemoteLabel: (payload: {
     key: string;
@@ -321,7 +323,7 @@ export const createRemoteMediaUiController = (
 
     const text = document.createElement("span");
     text.className = "participant-media-placeholder-text";
-    text.textContent = "Kamera veya ekran kapali";
+    text.textContent = "Kamera veya ekran kapalı";
 
     placeholder.appendChild(initials);
     placeholder.appendChild(text);
@@ -576,6 +578,7 @@ export const createRemoteMediaUiController = (
     sourceType: MediaSourceType,
     labelText: string,
     stream: MediaStream,
+    trackRef?: any,
   ): void => {
     let existing = remoteVideoMap.get(key);
     if (!existing) {
@@ -651,15 +654,55 @@ export const createRemoteMediaUiController = (
       container.appendChild(fullscreenButton);
       container.appendChild(exitFullscreenButton);
 
-      existing = { userId, sourceType, container, video, label };
+      existing = {
+        userId,
+        sourceType,
+        container,
+        video,
+        label,
+        liveKitTrack: null,
+      };
       remoteVideoMap.set(key, existing);
+    }
+
+    const detachLiveKitTrack = (): void => {
+      if (
+        !existing?.liveKitTrack ||
+        typeof existing.liveKitTrack.detach !== "function"
+      ) {
+        return;
+      }
+
+      try {
+        existing.liveKitTrack.detach(existing.video);
+      } catch {
+        // no-op
+      }
+    };
+
+    if (existing.liveKitTrack !== trackRef) {
+      detachLiveKitTrack();
+      existing.liveKitTrack = trackRef ?? null;
     }
 
     existing.userId = userId;
     existing.sourceType = sourceType;
     existing.container.dataset.sourceType = sourceType;
     existing.label.textContent = labelText;
-    existing.video.srcObject = stream;
+
+    if (
+      existing.liveKitTrack &&
+      typeof existing.liveKitTrack.attach === "function"
+    ) {
+      try {
+        existing.liveKitTrack.attach(existing.video);
+      } catch {
+        existing.video.srcObject = stream;
+      }
+    } else {
+      existing.video.srcObject = stream;
+    }
+
     attachVideoEntryToSlot(existing);
     applyExpandedMediaState();
     syncFullscreenState();
@@ -700,6 +743,18 @@ export const createRemoteMediaUiController = (
 
     const parent = existing.container.parentElement as HTMLElement | null;
     existing.video.srcObject = null;
+
+    if (
+      existing.liveKitTrack &&
+      typeof existing.liveKitTrack.detach === "function"
+    ) {
+      try {
+        existing.liveKitTrack.detach(existing.video);
+      } catch {
+        // no-op
+      }
+    }
+
     existing.container.remove();
     remoteVideoMap.delete(key);
 
@@ -758,13 +813,35 @@ export const createRemoteMediaUiController = (
     );
 
     if (payload.kind === "video") {
+      const fallbackStream =
+        payload.stream ??
+        (() => {
+          const mediaStreamTrack = payload.trackRef?.mediaStreamTrack as
+            | MediaStreamTrack
+            | undefined;
+          if (!mediaStreamTrack) {
+            return null;
+          }
+
+          return new MediaStream([mediaStreamTrack]);
+        })();
+
+      if (!fallbackStream) {
+        return;
+      }
+
       attachRemoteVideo(
         payload.key,
         payload.userId,
         payload.sourceType,
         label,
-        payload.stream,
+        fallbackStream,
+        payload.trackRef,
       );
+      return;
+    }
+
+    if (!payload.stream) {
       return;
     }
 

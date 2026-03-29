@@ -12,6 +12,7 @@ interface BootstrapContextMenuBindingsDeps {
     clientX: number,
     clientY: number,
   ) => void;
+  onSendDirectMessageToUser: (userId: string) => void;
   toggleParticipantMute: (userId: string) => void;
   updateParticipantAudioVolume: (userId: string, volumePercent: number) => void;
 }
@@ -26,6 +27,7 @@ export const bindContextMenuAndParticipantAudioControls = (
     closeParticipantAudioMenu,
     resolveContextMenuUserId,
     openParticipantAudioMenu,
+    onSendDirectMessageToUser,
     toggleParticipantMute,
     updateParticipantAudioVolume,
   } = deps;
@@ -84,6 +86,12 @@ export const bindContextMenuAndParticipantAudioControls = (
   lifecycle.on(dom.usersDirectoryList, "contextmenu", (event) => {
     handleParticipantContextMenu(event as MouseEvent);
   });
+  lifecycle.on(dom.usersSidebarDirectoryList, "contextmenu", (event) => {
+    handleParticipantContextMenu(event as MouseEvent);
+  });
+  lifecycle.on(dom.lobbiesList, "contextmenu", (event) => {
+    handleParticipantContextMenu(event as MouseEvent);
+  });
 
   dom.participantAudioMuteToggle.addEventListener("click", () => {
     const userId = getParticipantAudioMenuUserId();
@@ -92,6 +100,16 @@ export const bindContextMenuAndParticipantAudioControls = (
     }
 
     toggleParticipantMute(userId);
+  });
+
+  dom.participantAudioDirectMessage.addEventListener("click", () => {
+    const userId = getParticipantAudioMenuUserId();
+    if (!userId) {
+      return;
+    }
+
+    onSendDirectMessageToUser(userId);
+    closeParticipantAudioMenu();
   });
 
   dom.participantAudioVolumeSlider.addEventListener("input", () => {

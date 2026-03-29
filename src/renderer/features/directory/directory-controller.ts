@@ -1,5 +1,6 @@
 import type {
   DesktopApi,
+  LobbyMemberSnapshot,
   RegisteredUserSnapshot,
 } from "../../types/desktop-api";
 import type { DomRefs } from "../../ui/dom";
@@ -12,6 +13,7 @@ interface DirectoryControllerDeps {
   desktopApi: DesktopApi;
   lobbyController: LobbyController;
   getSelfUserId: () => string | null;
+  getSelectedUserId?: () => string | null;
   setStatus: (message: string, isError: boolean) => void;
   getErrorMessage: (error?: { message?: string }) => string;
   onUsersRefreshed?: (users: RegisteredUserSnapshot[]) => void;
@@ -33,6 +35,7 @@ export const createDirectoryController = (
     desktopApi,
     lobbyController,
     getSelfUserId,
+    getSelectedUserId,
     setStatus,
     getErrorMessage,
     onUsersRefreshed,
@@ -40,131 +43,159 @@ export const createDirectoryController = (
   let registeredUsers: RegisteredUserSnapshot[] = [];
   let usersDirectoryRefreshTimer: number | null = null;
 
+  const renderEmptyDirectoryState = (target: HTMLUListElement): void => {
+    target.innerHTML = "";
+
+    const empty = document.createElement("li");
+    empty.className =
+      "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
+
+    const identity = document.createElement("div");
+    identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
+
+    const name = document.createElement("div");
+    name.className =
+      "directory-name text-sm font-semibold text-text-secondary truncate";
+    name.textContent = "Henüz arkadaş görünmüyor";
+
+    const subline = document.createElement("div");
+    subline.className = "directory-subline text-xs text-text-muted truncate";
+    subline.textContent = "Yeni kullanıcılar burada listelenecek.";
+
+    identity.appendChild(name);
+    identity.appendChild(subline);
+    empty.appendChild(identity);
+    target.appendChild(empty);
+  };
+
+  const createDirectoryItem = (
+    user: RegisteredUserSnapshot,
+    activeMembers: Map<string, LobbyMemberSnapshot>,
+    selectedUserId: string | null,
+  ): HTMLLIElement => {
+    const lobbyMember = activeMembers.get(user.userId);
+    const inLobby = lobbyMember !== undefined;
+    const appOnline = user.appOnline === true;
+    const online = inLobby || appOnline;
+    const speaking =
+      lobbyMember?.speaking === true && lobbyMember.muted !== true;
+
+    const item = document.createElement("li");
+    item.className =
+      "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
+    item.dataset.userId = user.userId;
+    item.classList.toggle("active", online);
+    item.classList.toggle("selected", selectedUserId === user.userId);
+
+    const identity = document.createElement("div");
+    identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
+
+    const displayName =
+      user.displayName.trim().length > 0 ? user.displayName : user.username;
+
+    const name = document.createElement("div");
+    name.className =
+      "directory-name text-sm font-semibold text-text-primary truncate";
+    name.textContent = displayName;
+
+    const subline = document.createElement("div");
+    subline.className = "directory-subline text-xs text-text-muted truncate";
+    subline.textContent = `@${user.username} • ${user.role === "admin" ? "admin" : "üye"}`;
+
+    identity.appendChild(name);
+    identity.appendChild(subline);
+
+    const presence = document.createElement("div");
+    presence.className =
+      "directory-presence flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted flex-shrink-0 flex-wrap justify-end";
+
+    const createPresenceBadge = (
+      label: string,
+      tone: "online" | "talking" | "offline",
+    ): HTMLElement => {
+      const badge = document.createElement("span");
+      badge.className =
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5";
+
+      if (tone === "talking") {
+        badge.classList.add(
+          "border-amber-400/60",
+          "text-amber-100",
+          "bg-amber-400/20",
+        );
+      } else if (tone === "online") {
+        badge.classList.add(
+          "border-emerald-400/55",
+          "text-emerald-100",
+          "bg-emerald-400/15",
+        );
+      } else {
+        badge.classList.add(
+          "border-border",
+          "text-text-muted",
+          "bg-surface-2/50",
+        );
+      }
+
+      const dot = document.createElement("span");
+      dot.className = "w-1.5 h-1.5 rounded-full";
+      if (tone === "talking") {
+        dot.classList.add("bg-amber-300");
+      } else if (tone === "online") {
+        dot.classList.add("bg-emerald-300");
+      } else {
+        dot.classList.add("bg-text-muted");
+      }
+
+      const text = document.createElement("span");
+      text.textContent = label;
+
+      badge.appendChild(dot);
+      badge.appendChild(text);
+      return badge;
+    };
+
+    if (speaking) {
+      presence.appendChild(createPresenceBadge("konuşmada", "talking"));
+    } else if (online) {
+      presence.appendChild(createPresenceBadge("çevrimiçi", "online"));
+    } else {
+      presence.appendChild(createPresenceBadge("çevrimdışı", "offline"));
+    }
+
+    item.appendChild(identity);
+    item.appendChild(presence);
+    return item;
+  };
+
   const renderUserDirectory = (): void => {
     const selfUserId = getSelfUserId();
+    const selectedUserId = getSelectedUserId?.() ?? null;
     const visibleUsers = registeredUsers.filter(
       (user) => user.userId !== selfUserId,
     );
     const activeMembers = lobbyController.getMembersMap();
+    const targets = [dom.usersDirectoryList, dom.usersSidebarDirectoryList];
+
     dom.usersDirectoryCount.textContent = `${visibleUsers.length}`;
-    dom.usersDirectoryList.innerHTML = "";
 
     if (visibleUsers.length === 0) {
-      const empty = document.createElement("li");
-      empty.className =
-        "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
-
-      const identity = document.createElement("div");
-      identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
-
-      const name = document.createElement("div");
-      name.className =
-        "directory-name text-sm font-semibold text-text-secondary truncate";
-      name.textContent = "Henüz arkadaş görünmüyor";
-
-      const subline = document.createElement("div");
-      subline.className = "directory-subline text-xs text-text-muted truncate";
-      subline.textContent = "Yeni kullanıcılar burada listelenecek.";
-
-      identity.appendChild(name);
-      identity.appendChild(subline);
-      empty.appendChild(identity);
-      dom.usersDirectoryList.appendChild(empty);
+      for (const target of targets) {
+        renderEmptyDirectoryState(target);
+      }
       return;
     }
 
+    for (const target of targets) {
+      target.innerHTML = "";
+    }
+
     for (const user of visibleUsers) {
-      const lobbyMember = activeMembers.get(user.userId);
-      const inLobby = lobbyMember !== undefined;
-      const appOnline = user.appOnline === true;
-      const online = inLobby || appOnline;
-      const speaking =
-        lobbyMember?.speaking === true && lobbyMember.muted !== true;
-      const item = document.createElement("li");
-      item.className =
-        "directory-item min-h-[52px] rounded-xl border border-border bg-surface-2/40 px-4 py-3 flex items-center justify-between gap-3";
-      item.dataset.userId = user.userId;
-      item.classList.toggle("active", online);
-
-      const identity = document.createElement("div");
-      identity.className = "directory-identity min-w-0 flex flex-col gap-0.5";
-
-      const displayName =
-        user.displayName.trim().length > 0 ? user.displayName : user.username;
-
-      const name = document.createElement("div");
-      name.className =
-        "directory-name text-sm font-semibold text-text-primary truncate";
-      name.textContent = displayName;
-
-      const subline = document.createElement("div");
-      subline.className = "directory-subline text-xs text-text-muted truncate";
-      subline.textContent = `@${user.username} • ${user.role === "admin" ? "admin" : "üye"}`;
-
-      identity.appendChild(name);
-      identity.appendChild(subline);
-
-      const presence = document.createElement("div");
-      presence.className =
-        "directory-presence flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted flex-shrink-0 flex-wrap justify-end";
-
-      const createPresenceBadge = (
-        label: string,
-        tone: "online" | "talking" | "offline",
-      ): HTMLElement => {
-        const badge = document.createElement("span");
-        badge.className =
-          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5";
-
-        if (tone === "talking") {
-          badge.classList.add(
-            "border-amber-400/60",
-            "text-amber-100",
-            "bg-amber-400/20",
-          );
-        } else if (tone === "online") {
-          badge.classList.add(
-            "border-emerald-400/55",
-            "text-emerald-100",
-            "bg-emerald-400/15",
-          );
-        } else {
-          badge.classList.add(
-            "border-border",
-            "text-text-muted",
-            "bg-surface-2/50",
-          );
-        }
-
-        const dot = document.createElement("span");
-        dot.className = "w-1.5 h-1.5 rounded-full";
-        if (tone === "talking") {
-          dot.classList.add("bg-amber-300");
-        } else if (tone === "online") {
-          dot.classList.add("bg-emerald-300");
-        } else {
-          dot.classList.add("bg-text-muted");
-        }
-
-        const text = document.createElement("span");
-        text.textContent = label;
-
-        badge.appendChild(dot);
-        badge.appendChild(text);
-        return badge;
-      };
-
-      if (speaking) {
-        presence.appendChild(createPresenceBadge("konuşmada", "talking"));
-      } else if (online) {
-        presence.appendChild(createPresenceBadge("çevrimiçi", "online"));
-      } else {
-        presence.appendChild(createPresenceBadge("çevrimdışı", "offline"));
+      for (const target of targets) {
+        target.appendChild(
+          createDirectoryItem(user, activeMembers, selectedUserId),
+        );
       }
-
-      item.appendChild(identity);
-      item.appendChild(presence);
-      dom.usersDirectoryList.appendChild(item);
     }
   };
 

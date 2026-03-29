@@ -423,6 +423,17 @@ export const registerMediaIpcHandlers = (
           name: string;
           token: string;
           expiresAt: string;
+          mediaPolicy?: {
+            qualityProfile?: "balanced" | "high" | "low-bandwidth";
+            preferredVideoCodec: string;
+            backupVideoCodec: string;
+            cameraMaxBitrate: number;
+            cameraMaxFps: number;
+            screenMaxBitrate: number;
+            screenMaxFps: number;
+            simulcast: boolean;
+            dynacast: boolean;
+          };
         }>(error);
       }
     },

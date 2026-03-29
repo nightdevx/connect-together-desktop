@@ -70,7 +70,7 @@ export const createLobbyController = (dom: DomRefs): LobbyController => {
 
     const text = document.createElement("span");
     text.className = "participant-media-placeholder-text";
-    text.textContent = "Kamera veya ekran kapali";
+    text.textContent = "Kamera veya ekran kapalı";
 
     placeholder.appendChild(initials);
     placeholder.appendChild(text);

@@ -23,6 +23,7 @@ Kullanilan degiskenler:
 
 - `CT_BACKEND_URL`: Go backend adresi (ornek: `http://127.0.0.1:4001`)
 - `CT_LIVEKIT_ROOM`: Desktop'in token isterken kullanacagi varsayilan oda
+- `CT_MEDIA_QUALITY_PROFILE`: Renderer varsayilan kalite profili (`balanced`, `high`, `low-bandwidth`)
 - `CT_ICE_URLS`: Virgulle ayrilmis ICE/STUN/TURN URL listesi
 - `CT_ICE_USERNAME`: (Opsiyonel) TURN username
 - `CT_ICE_CREDENTIAL`: (Opsiyonel) TURN credential
@@ -30,6 +31,7 @@ Kullanilan degiskenler:
 Ornek:
 CT_BACKEND_URL=http://127.0.0.1:4001
 CT_LIVEKIT_ROOM=main-lobby
+CT_MEDIA_QUALITY_PROFILE=balanced
 CT_ICE_URLS=stun:stun.l.google.com:19302,turn:turn.example.com:3478
 CT_ICE_USERNAME=turn-user
 CT_ICE_CREDENTIAL=turn-pass
@@ -57,7 +59,5 @@ Desktop istemci `electron-updater` ile GitHub release uzerinden otomatik guncell
 4. GitHub release olusturup bu dosyalari yukler.
 
 Not: Yeni OTA dagitimi icin `desktop/package.json` versiyonunu arttirman gerekir.
-
-
 
 kullanıcı başka kullanıcıların mikrofon ve kulaklık durumlarını sürekli açık olarak görüyor.kapatılıp açılsa bile aynı şekilde kalıyor bu sorunu düzelt.ilk bağlanıldığında mikrofon kapalı oluyor ama ses gidiyor.bunuda düzelt.lobide kullanıcıların gözüktüğü yerde kutularda uygulama ikonu değil,eğer yayın ya da kamera açık değilse kullanıcı listesindeki gibi harfler gözükmesini sağla.kullanıcı hem kamera hem yayın açarsa kameranın kullanıcı kutusunda,yayınında ekstra bir kutuda sadece altta yine kullanıcının adı gözükecek şekilde olmasını sağla.

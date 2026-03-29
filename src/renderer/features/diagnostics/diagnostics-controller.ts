@@ -12,6 +12,7 @@ type DiagnosticsBannerState = keyof typeof DIAG_STATUS_ICON_PATHS;
 
 export interface DiagnosticMetrics {
   voiceConnected: boolean;
+  voiceConnectionInProgress: boolean;
   realtimeConnectionStatus: "connected" | "disconnected" | "error";
   realtimeLatencyMs: number | null;
   realtimePacketLossPercent: number;
@@ -75,6 +76,10 @@ export const createDiagnosticsController = (
     packetLossPercent: number,
     metrics: DiagnosticMetrics,
   ): string => {
+    if (metrics.voiceConnectionInProgress) {
+      return "Sohbete bağlanma sürüyor. Ses bağlantısı kurulduğunda ping ve paket kaybı canlı görünecek.";
+    }
+
     if (!metrics.voiceConnected) {
       return "Sohbete bağlanınca gecikme ve bağlantı sağlığı burada canlı güncellenir.";
     }
@@ -105,8 +110,7 @@ export const createDiagnosticsController = (
     const lastPing = hasLiveVoiceMetrics ? metrics.realtimeLatencyMs : null;
     const packetLossPercent = hasLiveVoiceMetrics
       ? metrics.realtimePacketLossPercent
-      : metrics.voiceConnected &&
-          metrics.realtimeConnectionStatus === "error"
+      : metrics.voiceConnected && metrics.realtimeConnectionStatus === "error"
         ? Math.max(8.5, metrics.realtimePacketLossPercent)
         : 0;
 
@@ -115,7 +119,10 @@ export const createDiagnosticsController = (
     let bannerState: DiagnosticsBannerState = "idle";
     let bannerText = "Ses bağlantısı bekleniyor";
 
-    if (
+    if (metrics.voiceConnectionInProgress) {
+      bannerState = "warn";
+      bannerText = "Sohbete bağlanılıyor";
+    } else if (
       metrics.voiceConnected &&
       metrics.realtimeConnectionStatus === "connected"
     ) {

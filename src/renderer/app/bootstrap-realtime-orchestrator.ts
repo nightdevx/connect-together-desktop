@@ -21,7 +21,9 @@ interface BootstrapRealtimeOrchestratorDeps {
   isRemoteMediaAnnouncementInitialized: () => boolean;
   getSelfUserId: () => string | null;
   setStatus: (message: string, isError: boolean) => void;
-  playUiSound: (effect: "participant-share-on") => void;
+  playUiSound: (
+    effect: "participant-share-on" | "lobby-member-join" | "lobby-member-leave",
+  ) => void;
   setConnectionState: (message: string, tone: "ok" | "warn" | "error") => void;
   onConnected: () => void;
   setRealtimeConnectionStatus: (
@@ -35,10 +37,19 @@ interface BootstrapRealtimeOrchestratorDeps {
   resetRemoteMediaAnnouncementState: () => void;
   handleDisconnectedState: () => void;
   updateDiagnostics: () => void;
-  onLobbyStateApplied: (members: LobbyMemberSnapshot[]) => void;
-  onMemberJoinedApplied: (member: LobbyMemberSnapshot) => void;
-  onMemberUpdatedApplied: (member: LobbyMemberSnapshot) => void;
-  onMemberLeftApplied: (userId: string) => void;
+  onLobbyStateApplied: (
+    members: LobbyMemberSnapshot[],
+    lobbyId?: string,
+  ) => void;
+  onMemberJoinedApplied: (
+    member: LobbyMemberSnapshot,
+    lobbyId?: string,
+  ) => void;
+  onMemberUpdatedApplied: (
+    member: LobbyMemberSnapshot,
+    lobbyId?: string,
+  ) => void;
+  onMemberLeftApplied: (userId: string, lobbyId?: string) => void;
   onLobbyChatHistoryApplied: (messages: LobbyChatMessage[]) => void;
   onLobbyMessageApplied: (message: LobbyChatMessage) => void;
   onRtcSignal: (payload: RtcSignalPayload) => void;
@@ -103,7 +114,7 @@ export const subscribeBootstrapRealtimeOrchestrator = (
 
       deps.updateDiagnostics();
     },
-    onLobbyState: (members, revision) => {
+    onLobbyState: (members, revision, lobbyId) => {
       if (!deps.shouldApplyLobbyRevision(revision)) {
         return;
       }
@@ -113,9 +124,9 @@ export const subscribeBootstrapRealtimeOrchestrator = (
       );
 
       deps.syncRemoteMediaAnnouncements(normalizedMembers);
-      deps.onLobbyStateApplied(normalizedMembers);
+      deps.onLobbyStateApplied(normalizedMembers, lobbyId);
     },
-    onMemberJoined: (member, revision) => {
+    onMemberJoined: (member, revision, lobbyId) => {
       if (!deps.shouldApplyLobbyRevision(revision)) {
         return;
       }
@@ -124,6 +135,10 @@ export const subscribeBootstrapRealtimeOrchestrator = (
       deps.setStatus("Lobiye bir üye katıldı", false);
 
       const selfId = deps.getSelfUserId();
+      if (normalizedMember.userId !== selfId) {
+        deps.playUiSound("lobby-member-join");
+      }
+
       if (
         deps.isRemoteMediaAnnouncementInitialized() &&
         normalizedMember.userId !== selfId &&
@@ -132,23 +147,26 @@ export const subscribeBootstrapRealtimeOrchestrator = (
         deps.playUiSound("participant-share-on");
       }
 
-      deps.onMemberJoinedApplied(normalizedMember);
+      deps.onMemberJoinedApplied(normalizedMember, lobbyId);
     },
-    onMemberUpdated: (member, revision) => {
+    onMemberUpdated: (member, revision, lobbyId) => {
       if (!deps.shouldApplyLobbyRevision(revision)) {
         return;
       }
 
       const normalizedMember = deps.applySelfLobbyRealtimeOverrides(member);
-      deps.onMemberUpdatedApplied(normalizedMember);
+      deps.onMemberUpdatedApplied(normalizedMember, lobbyId);
     },
-    onMemberLeft: (userId, revision) => {
+    onMemberLeft: (userId, revision, lobbyId) => {
       if (!deps.shouldApplyLobbyRevision(revision)) {
         return;
       }
 
       deps.setStatus("Bir üye lobiden ayrıldı", false);
-      deps.onMemberLeftApplied(userId);
+      if (userId !== deps.getSelfUserId()) {
+        deps.playUiSound("lobby-member-leave");
+      }
+      deps.onMemberLeftApplied(userId, lobbyId);
     },
     onLobbyChatHistory: (messages) => {
       deps.onLobbyChatHistoryApplied(messages);

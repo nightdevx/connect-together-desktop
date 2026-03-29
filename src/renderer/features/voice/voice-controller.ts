@@ -40,6 +40,18 @@ interface MediaDebugLogPayload {
   details?: Record<string, unknown>;
 }
 
+interface LiveKitMediaPolicy {
+  qualityProfile: "balanced" | "high" | "low-bandwidth";
+  preferredVideoCodec: "vp8" | "h264" | "vp9" | "av1" | "h265";
+  backupVideoCodec: "vp8" | "h264";
+  cameraMaxBitrate: number;
+  cameraMaxFps: number;
+  screenMaxBitrate: number;
+  screenMaxFps: number;
+  simulcast: boolean;
+  dynacast: boolean;
+}
+
 interface VoiceControllerDeps {
   dom: DomRefs;
   rtcConfig: RTCConfiguration;
@@ -105,6 +117,7 @@ interface VoiceController {
   createScreenTestStream: (
     options?: ScreenShareOptions,
   ) => Promise<MediaStream>;
+  shutdownMedia: () => Promise<void>;
   startVoice: () => Promise<void>;
   stopVoice: () => Promise<void>;
   handleMicrophoneChange: (deviceId: string) => Promise<void>;
@@ -133,6 +146,7 @@ const AUTO_MARGIN_MIN = 0.0045;
 const THRESHOLD_REPORT_INTERVAL_MS = 250;
 const INPUT_LEVEL_REPORT_INTERVAL_MS = 40;
 const LIVEKIT_METRICS_INTERVAL_MS = 3000;
+const LIVEKIT_VIDEO_SENDER_STATS_INTERVAL_MS = 5000;
 const LIVEKIT_PROBE_HISTORY_SIZE = 20;
 const INPUT_GAIN_MIN_PERCENT = 0;
 const INPUT_GAIN_MAX_PERCENT = 200;
@@ -165,6 +179,18 @@ const SCREEN_CAPTURE_MAX_QUALITY: VideoCaptureQuality = {
   width: 2560,
   height: 1440,
   fps: 60,
+};
+
+const DEFAULT_LIVEKIT_MEDIA_POLICY: LiveKitMediaPolicy = {
+  qualityProfile: "balanced",
+  preferredVideoCodec: "vp9",
+  backupVideoCodec: "h264",
+  cameraMaxBitrate: 1_500_000,
+  cameraMaxFps: 30,
+  screenMaxBitrate: 3_800_000,
+  screenMaxFps: 30,
+  simulcast: true,
+  dynacast: true,
 };
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -346,34 +372,133 @@ const resolveCameraMaxBitrate = (track: MediaStreamTrack): number => {
   const settings = getTrackSettingsSize(track);
   const complexity = settings.width * settings.height * settings.fps;
 
-  if (complexity >= 1920 * 1080 * 50) {
-    return 4_500_000;
-  }
   if (complexity >= 1920 * 1080 * 30) {
-    return 3_200_000;
+    return 2_400_000;
   }
   if (complexity >= 1280 * 720 * 30) {
-    return 2_200_000;
+    return 1_200_000;
+  }
+  if (complexity >= 960 * 540 * 24) {
+    return 800_000;
   }
 
-  return 1_000_000;
+  return 450_000;
 };
 
 const resolveScreenMaxBitrate = (track: MediaStreamTrack): number => {
   const settings = getTrackSettingsSize(track);
   const complexity = settings.width * settings.height * settings.fps;
 
-  if (complexity >= 2560 * 1440 * 45) {
-    return 8_000_000;
-  }
   if (complexity >= 2560 * 1440 * 30) {
-    return 6_500_000;
+    return 6_000_000;
   }
   if (complexity >= 1920 * 1080 * 30) {
-    return 4_500_000;
+    return 3_800_000;
+  }
+  if (complexity >= 1920 * 1080 * 15) {
+    return 2_600_000;
+  }
+  if (complexity >= 1280 * 720 * 20) {
+    return 1_800_000;
   }
 
-  return 2_500_000;
+  return 1_000_000;
+};
+
+const normalizeLiveKitMediaPolicy = (
+  rawPolicy: unknown,
+): LiveKitMediaPolicy => {
+  if (!rawPolicy || typeof rawPolicy !== "object") {
+    return DEFAULT_LIVEKIT_MEDIA_POLICY;
+  }
+
+  const source = rawPolicy as Record<string, unknown>;
+  const qualityProfileRaw = String(
+    source.qualityProfile ?? DEFAULT_LIVEKIT_MEDIA_POLICY.qualityProfile,
+  ).toLowerCase();
+  const preferredVideoCodecRaw = String(
+    source.preferredVideoCodec ??
+      DEFAULT_LIVEKIT_MEDIA_POLICY.preferredVideoCodec,
+  ).toLowerCase();
+  const backupVideoCodecRaw = String(
+    source.backupVideoCodec ?? DEFAULT_LIVEKIT_MEDIA_POLICY.backupVideoCodec,
+  ).toLowerCase();
+
+  const preferredVideoCodec =
+    preferredVideoCodecRaw === "vp8" ||
+    preferredVideoCodecRaw === "h264" ||
+    preferredVideoCodecRaw === "vp9" ||
+    preferredVideoCodecRaw === "av1" ||
+    preferredVideoCodecRaw === "h265"
+      ? preferredVideoCodecRaw
+      : DEFAULT_LIVEKIT_MEDIA_POLICY.preferredVideoCodec;
+
+  const backupVideoCodec =
+    backupVideoCodecRaw === "vp8" || backupVideoCodecRaw === "h264"
+      ? backupVideoCodecRaw
+      : DEFAULT_LIVEKIT_MEDIA_POLICY.backupVideoCodec;
+
+  const qualityProfile =
+    qualityProfileRaw === "high" || qualityProfileRaw === "low-bandwidth"
+      ? qualityProfileRaw
+      : DEFAULT_LIVEKIT_MEDIA_POLICY.qualityProfile;
+
+  const cameraMaxBitrate = Math.max(
+    100_000,
+    Math.round(
+      toFiniteNumber(
+        Number(source.cameraMaxBitrate),
+        DEFAULT_LIVEKIT_MEDIA_POLICY.cameraMaxBitrate,
+      ),
+    ),
+  );
+  const cameraMaxFps = Math.round(
+    clamp(
+      toFiniteNumber(
+        Number(source.cameraMaxFps),
+        DEFAULT_LIVEKIT_MEDIA_POLICY.cameraMaxFps,
+      ),
+      5,
+      60,
+    ),
+  );
+  const screenMaxBitrate = Math.max(
+    100_000,
+    Math.round(
+      toFiniteNumber(
+        Number(source.screenMaxBitrate),
+        DEFAULT_LIVEKIT_MEDIA_POLICY.screenMaxBitrate,
+      ),
+    ),
+  );
+  const screenMaxFps = Math.round(
+    clamp(
+      toFiniteNumber(
+        Number(source.screenMaxFps),
+        DEFAULT_LIVEKIT_MEDIA_POLICY.screenMaxFps,
+      ),
+      5,
+      60,
+    ),
+  );
+
+  return {
+    qualityProfile,
+    preferredVideoCodec,
+    backupVideoCodec,
+    cameraMaxBitrate,
+    cameraMaxFps,
+    screenMaxBitrate,
+    screenMaxFps,
+    simulcast:
+      typeof source.simulcast === "boolean"
+        ? source.simulcast
+        : DEFAULT_LIVEKIT_MEDIA_POLICY.simulcast,
+    dynacast:
+      typeof source.dynacast === "boolean"
+        ? source.dynacast
+        : DEFAULT_LIVEKIT_MEDIA_POLICY.dynacast,
+  };
 };
 
 const manualPercentToThreshold = (percent: number): number => {
@@ -438,9 +563,16 @@ export const createVoiceController = (
 
   let localLiveKitCameraPublication: any | null = null;
   let localLiveKitCameraStream: MediaStream | null = null;
+  let pendingLiveKitCameraStream: MediaStream | null = null;
 
   let localLiveKitScreenPublication: any | null = null;
   let localLiveKitScreenStream: MediaStream | null = null;
+  let pendingLiveKitScreenStream: MediaStream | null = null;
+  let liveKitMediaPolicy: LiveKitMediaPolicy = DEFAULT_LIVEKIT_MEDIA_POLICY;
+  let liveKitCameraStatsTimer: number | null = null;
+  let liveKitScreenStatsTimer: number | null = null;
+
+  let mediaOperationVersion = 0;
 
   const remoteMediaUi = createRemoteMediaUiController({
     dom: deps.dom,
@@ -1128,21 +1260,39 @@ export const createVoiceController = (
       );
 
       try {
+        const toleratedWidth = Math.round(
+          clamp(
+            quality.width * 1.2,
+            quality.width,
+            CAMERA_CAPTURE_MAX_QUALITY.width,
+          ),
+        );
+        const toleratedHeight = Math.round(
+          clamp(
+            quality.height * 1.2,
+            quality.height,
+            CAMERA_CAPTURE_MAX_QUALITY.height,
+          ),
+        );
+        const toleratedFps = Math.round(
+          clamp(quality.fps + 5, quality.fps, CAMERA_CAPTURE_MAX_QUALITY.fps),
+        );
+
         const stream = await getUserMediaSafe({
           video: {
             width: {
               ideal: quality.width,
-              max: quality.width,
+              max: toleratedWidth,
               min: CAMERA_CAPTURE_MIN_QUALITY.width,
             },
             height: {
               ideal: quality.height,
-              max: quality.height,
+              max: toleratedHeight,
               min: CAMERA_CAPTURE_MIN_QUALITY.height,
             },
             frameRate: {
               ideal: quality.fps,
-              max: quality.fps,
+              max: toleratedFps,
               min: CAMERA_CAPTURE_MIN_QUALITY.fps,
             },
           },
@@ -1366,11 +1516,29 @@ export const createVoiceController = (
       );
 
       try {
+        const toleratedWidth = Math.round(
+          clamp(
+            quality.width * 1.2,
+            quality.width,
+            SCREEN_CAPTURE_MAX_QUALITY.width,
+          ),
+        );
+        const toleratedHeight = Math.round(
+          clamp(
+            quality.height * 1.2,
+            quality.height,
+            SCREEN_CAPTURE_MAX_QUALITY.height,
+          ),
+        );
+        const toleratedFps = Math.round(
+          clamp(quality.fps + 5, quality.fps, SCREEN_CAPTURE_MAX_QUALITY.fps),
+        );
+
         const stream = await getDisplayMediaSafe({
           video: {
-            width: { ideal: quality.width, max: quality.width },
-            height: { ideal: quality.height, max: quality.height },
-            frameRate: { ideal: quality.fps, max: quality.fps },
+            width: { ideal: quality.width, max: toleratedWidth },
+            height: { ideal: quality.height, max: toleratedHeight },
+            frameRate: { ideal: quality.fps, max: toleratedFps },
           },
           audio: false,
         });
@@ -1632,6 +1800,58 @@ export const createVoiceController = (
     return null;
   };
 
+  const resolvePreferredRemoteVideoQuality = (
+    sourceType: "microphone" | "camera" | "screen",
+  ): unknown => {
+    const videoQuality = liveKitSdk?.VideoQuality;
+    if (sourceType === "screen") {
+      return videoQuality?.HIGH ?? "high";
+    }
+
+    return videoQuality?.MEDIUM ?? "medium";
+  };
+
+  const applyRemotePublicationPreferences = (
+    publication: any,
+    sourceType: "microphone" | "camera" | "screen",
+  ): void => {
+    if (!publication) {
+      return;
+    }
+
+    try {
+      publication.setSubscribed?.(true);
+    } catch {
+      // no-op
+    }
+
+    if (sourceType === "microphone") {
+      return;
+    }
+
+    try {
+      publication.setEnabled?.(true);
+    } catch {
+      // no-op
+    }
+
+    try {
+      publication.setVideoQuality?.(
+        resolvePreferredRemoteVideoQuality(sourceType),
+      );
+    } catch {
+      // no-op
+    }
+
+    if (sourceType === "screen") {
+      try {
+        publication.setVideoFPS?.(15);
+      } catch {
+        // no-op
+      }
+    }
+  };
+
   const rememberLiveKitTrackKey = (userId: string, key: string): void => {
     const keys = liveKitTrackKeysByParticipant.get(userId) ?? new Set<string>();
     keys.add(key);
@@ -1687,7 +1907,7 @@ export const createVoiceController = (
     }
 
     const mediaTrack = track?.mediaStreamTrack as MediaStreamTrack | undefined;
-    if (!mediaTrack) {
+    if (!mediaTrack && kind === "audio") {
       return;
     }
 
@@ -1697,7 +1917,7 @@ export const createVoiceController = (
     }
 
     const sid = String(
-      publication?.trackSid ?? publication?.sid ?? mediaTrack.id,
+      publication?.trackSid ?? publication?.sid ?? mediaTrack?.id ?? "",
     );
     if (!sid) {
       return;
@@ -1707,6 +1927,7 @@ export const createVoiceController = (
     const sourceType = resolveLiveKitSourceType(
       publication?.source ?? track?.source,
     );
+    applyRemotePublicationPreferences(publication, sourceType);
 
     liveKitTrackKeyBySid.set(sid, key);
     liveKitTrackMetaByKey.set(key, {
@@ -1721,7 +1942,8 @@ export const createVoiceController = (
       userId,
       kind,
       sourceType,
-      stream: new MediaStream([mediaTrack]),
+      ...(mediaTrack ? { stream: new MediaStream([mediaTrack]) } : {}),
+      ...(kind === "video" ? { trackRef: track } : {}),
     });
   };
 
@@ -1730,6 +1952,9 @@ export const createVoiceController = (
       participant?.trackPublications?.values?.() ?? [];
 
     for (const publication of publications) {
+      const sourceType = resolveLiveKitSourceType(publication?.source);
+      applyRemotePublicationPreferences(publication, sourceType);
+
       const track = publication?.track;
       if (!track) {
         continue;
@@ -1879,7 +2104,141 @@ export const createVoiceController = (
       });
   };
 
+  const stopLiveKitCameraStatsMonitor = (): void => {
+    if (liveKitCameraStatsTimer !== null) {
+      window.clearInterval(liveKitCameraStatsTimer);
+      liveKitCameraStatsTimer = null;
+    }
+  };
+
+  const stopLiveKitScreenStatsMonitor = (): void => {
+    if (liveKitScreenStatsTimer !== null) {
+      window.clearInterval(liveKitScreenStatsTimer);
+      liveKitScreenStatsTimer = null;
+    }
+  };
+
+  const stopLiveKitVideoStatsMonitors = (): void => {
+    stopLiveKitCameraStatsMonitor();
+    stopLiveKitScreenStatsMonitor();
+  };
+
+  const readPrimaryVideoSenderStat = async (
+    publication: any,
+  ): Promise<Record<string, unknown> | null> => {
+    const track = publication?.track;
+    if (!track || typeof track.getSenderStats !== "function") {
+      return null;
+    }
+
+    let senderStats: unknown;
+    try {
+      senderStats = await track.getSenderStats();
+    } catch {
+      return null;
+    }
+
+    if (!Array.isArray(senderStats) || senderStats.length === 0) {
+      return null;
+    }
+
+    let best = senderStats[0] as Record<string, unknown>;
+    for (const candidate of senderStats) {
+      if (!candidate || typeof candidate !== "object") {
+        continue;
+      }
+
+      const bestTarget = Number(best.targetBitrate ?? 0);
+      const candidateRecord = candidate as Record<string, unknown>;
+      const candidateTarget = Number(candidateRecord.targetBitrate ?? 0);
+      if (candidateTarget > bestTarget) {
+        best = candidateRecord;
+      }
+    }
+
+    return best;
+  };
+
+  const monitorLocalVideoPublication = (
+    scope: "camera" | "screen",
+    publication: any,
+    requestedQuality: VideoCaptureQuality,
+  ): void => {
+    const timerRef = scope === "camera" ? "camera-stats" : "screen-stats";
+    const minExpectedFps = Math.max(8, Math.round(requestedQuality.fps * 0.6));
+    const minExpectedBitrate = scope === "camera" ? 300_000 : 800_000;
+
+    const sample = async (): Promise<void> => {
+      if (!liveKitRoom || !publication) {
+        return;
+      }
+
+      const bestStat = await readPrimaryVideoSenderStat(publication);
+      if (!bestStat) {
+        return;
+      }
+
+      const reason = String(bestStat.qualityLimitationReason ?? "none");
+      const targetBitrate = Math.round(
+        Math.max(0, Number(bestStat.targetBitrate ?? 0)),
+      );
+      const fps = Math.round(
+        Math.max(0, Number(bestStat.framesPerSecond ?? 0)),
+      );
+      const frameWidth = Math.round(
+        Math.max(0, Number(bestStat.frameWidth ?? 0)),
+      );
+      const frameHeight = Math.round(
+        Math.max(0, Number(bestStat.frameHeight ?? 0)),
+      );
+
+      const qualityLimited =
+        reason !== "none" && reason !== "" && reason !== "other";
+      const bitrateLow =
+        targetBitrate > 0 && targetBitrate < minExpectedBitrate;
+      const fpsLow = fps > 0 && fps < minExpectedFps;
+
+      if (!qualityLimited && !bitrateLow && !fpsLow) {
+        return;
+      }
+
+      emitMediaDebugLog(
+        "warn",
+        scope,
+        "sender-quality-limited",
+        "Yayin kalitesi ag veya cihaz kosullarina gore sinirlandi",
+        {
+          timer: timerRef,
+          requestedQuality,
+          targetBitrate,
+          fps,
+          frameWidth,
+          frameHeight,
+          qualityLimitationReason: reason,
+          minExpectedFps,
+          minExpectedBitrate,
+        },
+      );
+    };
+
+    const timer = window.setInterval(() => {
+      void sample();
+    }, LIVEKIT_VIDEO_SENDER_STATS_INTERVAL_MS);
+
+    if (scope === "camera") {
+      stopLiveKitCameraStatsMonitor();
+      liveKitCameraStatsTimer = timer;
+    } else {
+      stopLiveKitScreenStatsMonitor();
+      liveKitScreenStatsTimer = timer;
+    }
+
+    void sample();
+  };
+
   const stopLiveKitCameraShare = (): void => {
+    stopLiveKitCameraStatsMonitor();
+
     emitMediaDebugLog(
       "info",
       "camera",
@@ -1893,6 +2252,9 @@ export const createVoiceController = (
     unpublishLiveKitPublication(localLiveKitCameraPublication);
     localLiveKitCameraPublication = null;
 
+    stopMediaStream(pendingLiveKitCameraStream);
+    pendingLiveKitCameraStream = null;
+
     stopMediaStream(localLiveKitCameraStream);
     localLiveKitCameraStream = null;
     remoteMediaUi.removeRemoteTrack("local:camera", "video");
@@ -1901,6 +2263,8 @@ export const createVoiceController = (
   };
 
   const stopLiveKitScreenShare = (): void => {
+    stopLiveKitScreenStatsMonitor();
+
     emitMediaDebugLog(
       "info",
       "screen",
@@ -1921,6 +2285,9 @@ export const createVoiceController = (
 
     unpublishLiveKitPublication(localLiveKitScreenPublication);
     localLiveKitScreenPublication = null;
+
+    stopMediaStream(pendingLiveKitScreenStream);
+    pendingLiveKitScreenStream = null;
 
     stopMediaStream(localLiveKitScreenStream);
     localLiveKitScreenStream = null;
@@ -1987,6 +2354,10 @@ export const createVoiceController = (
       throw new Error(getErrorMessage(tokenResult.error));
     }
 
+    liveKitMediaPolicy = normalizeLiveKitMediaPolicy(
+      tokenResult.data.mediaPolicy,
+    );
+
     emitMediaDebugLog(
       "info",
       "livekit",
@@ -1999,20 +2370,52 @@ export const createVoiceController = (
           ? deps.rtcConfig.iceServers.length
           : 0,
         hasCustomIceTransportPolicy: Boolean(deps.rtcConfig.iceTransportPolicy),
+        mediaPolicy: liveKitMediaPolicy,
       },
     );
 
     const sdk = await ensureLiveKitSdk();
+    const publishDefaults: Record<string, unknown> = {
+      dtx: true,
+      red: true,
+      simulcast: liveKitMediaPolicy.simulcast,
+      videoCodec: liveKitMediaPolicy.preferredVideoCodec,
+      backupCodec: {
+        codec: liveKitMediaPolicy.backupVideoCodec,
+      },
+      videoEncoding: {
+        maxBitrate: liveKitMediaPolicy.cameraMaxBitrate,
+        maxFramerate: liveKitMediaPolicy.cameraMaxFps,
+      },
+      screenShareEncoding: {
+        maxBitrate: liveKitMediaPolicy.screenMaxBitrate,
+        maxFramerate: liveKitMediaPolicy.screenMaxFps,
+      },
+      degradationPreference: "balanced",
+    };
+
+    const defaultVideoSimulcastLayers = [
+      sdk.VideoPresets?.h360,
+      sdk.VideoPresets?.h180,
+    ].filter(Boolean);
+    if (defaultVideoSimulcastLayers.length > 0) {
+      publishDefaults.videoSimulcastLayers = defaultVideoSimulcastLayers;
+    }
+
+    const defaultScreenSimulcastLayers = [
+      sdk.ScreenSharePresets?.h1080fps15,
+      sdk.ScreenSharePresets?.h720fps15,
+    ].filter(Boolean);
+    if (defaultScreenSimulcastLayers.length > 0) {
+      publishDefaults.screenShareSimulcastLayers = defaultScreenSimulcastLayers;
+    }
+
     const room = new sdk.Room({
       adaptiveStream: true,
-      dynacast: true,
+      dynacast: liveKitMediaPolicy.dynacast,
       rtcConfig: deps.rtcConfig,
       stopLocalTrackOnUnpublish: true,
-      publishDefaults: {
-        dtx: true,
-        red: true,
-        simulcast: true,
-      },
+      publishDefaults,
     });
 
     const roomEvent = sdk.RoomEvent ?? {};
@@ -2022,6 +2425,74 @@ export const createVoiceController = (
       (track: any, publication: any, participant: any) => {
         attachLiveKitTrack(track, publication, participant);
         emitLiveKitLobbySnapshot();
+      },
+    );
+
+    room.on(
+      roomEvent.TrackPublished ?? "trackPublished",
+      (publication: any, participant: any) => {
+        const userId = String(participant?.identity ?? "").trim();
+        if (!userId || userId === deps.getSelfUserId()) {
+          return;
+        }
+
+        const sourceType = resolveLiveKitSourceType(publication?.source);
+        applyRemotePublicationPreferences(publication, sourceType);
+      },
+    );
+
+    room.on(
+      roomEvent.TrackSubscriptionFailed ?? "trackSubscriptionFailed",
+      (trackSid: unknown, participant: any, error: unknown) => {
+        const userId = String(participant?.identity ?? "").trim() || null;
+        emitMediaDebugLog(
+          "warn",
+          "livekit",
+          "track-subscription-failed",
+          "Uzak track aboneligi basarisiz oldu",
+          {
+            trackSid: String(trackSid ?? "") || null,
+            userId,
+            error: getUnknownErrorMessage(error),
+          },
+        );
+      },
+    );
+
+    room.on(
+      roomEvent.TrackStreamStateChanged ?? "trackStreamStateChanged",
+      (publication: any, streamState: unknown, participant: any) => {
+        const userId = String(participant?.identity ?? "").trim() || null;
+        emitMediaDebugLog(
+          "info",
+          "livekit",
+          "track-stream-state-changed",
+          "Uzak track stream state degisti",
+          {
+            userId,
+            trackSid:
+              String(publication?.trackSid ?? publication?.sid ?? "") || null,
+            streamState: String(streamState ?? "unknown"),
+            source: String(publication?.source ?? "unknown"),
+          },
+        );
+      },
+    );
+
+    room.on(
+      roomEvent.ConnectionQualityChanged ?? "connectionQualityChanged",
+      (quality: unknown, participant: any) => {
+        const userId = String(participant?.identity ?? "").trim() || null;
+        emitMediaDebugLog(
+          "info",
+          "livekit",
+          "connection-quality-changed",
+          "LiveKit baglanti kalitesi degisti",
+          {
+            userId,
+            quality: String(quality ?? "unknown"),
+          },
+        );
       },
     );
 
@@ -2080,6 +2551,7 @@ export const createVoiceController = (
       );
 
       stopLiveKitMetrics();
+      stopLiveKitVideoStatsMonitors();
       clearAllLiveKitRemoteTracks();
       remoteMediaUi.removeRemoteTrack("local:camera", "video");
       remoteMediaUi.removeRemoteTrack("local:screen", "video");
@@ -2101,7 +2573,10 @@ export const createVoiceController = (
         roomName: String(room.name ?? deps.getLiveKitDefaultRoom()),
         selfIdentity: String(room.localParticipant?.identity ?? ""),
         adaptiveStream: true,
-        dynacast: true,
+        dynacast: liveKitMediaPolicy.dynacast,
+        codec: liveKitMediaPolicy.preferredVideoCodec,
+        simulcast: liveKitMediaPolicy.simulcast,
+        qualityProfile: liveKitMediaPolicy.qualityProfile,
       },
     );
 
@@ -2128,6 +2603,7 @@ export const createVoiceController = (
     );
 
     stopLiveKitMetrics();
+    stopLiveKitVideoStatsMonitors();
     stopLiveKitCameraShare();
     stopLiveKitScreenShare();
 
@@ -2212,6 +2688,8 @@ export const createVoiceController = (
   const toggleLiveKitCameraShare = async (
     options?: CameraShareOptions,
   ): Promise<boolean> => {
+    const operationVersion = mediaOperationVersion;
+
     if (localLiveKitCameraPublication) {
       emitMediaDebugLog(
         "info",
@@ -2228,80 +2706,124 @@ export const createVoiceController = (
     }
 
     const sdk = await ensureLiveKitSdk();
+    if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+      return false;
+    }
+
     const stream = await createCameraCaptureStream(options);
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      stopMediaStream(stream);
-      throw new Error("kamera izi alinamadi");
-    }
+    pendingLiveKitCameraStream = stream;
 
-    const cameraTrackSettings = getTrackSettingsSize(track);
-    const cameraMaxBitrate = resolveCameraMaxBitrate(track);
-    const cameraMaxFramerate = Math.min(60, cameraTrackSettings.fps);
+    try {
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        stopMediaStream(stream);
+        throw new Error("kamera izi alinamadi");
+      }
 
-    const publication = await liveKitRoom.localParticipant.publishTrack(track, {
-      source: sdk.Track?.Source?.Camera,
-      simulcast: true,
-      videoEncoding: {
-        maxBitrate: cameraMaxBitrate,
-        maxFramerate: cameraMaxFramerate,
-      },
-    });
+      if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+        stopMediaStream(stream);
+        return false;
+      }
 
-    emitMediaDebugLog(
-      "info",
-      "camera",
-      "publish-started",
-      "Kamera yayını başlatıldı",
-      {
-        requestedQuality: options?.quality ?? CAMERA_CAPTURE_DEFAULT_QUALITY,
-        actualQuality: cameraTrackSettings,
-        encoding: {
-          maxBitrate: cameraMaxBitrate,
-          maxFramerate: cameraMaxFramerate,
-          simulcast: true,
-        },
-        publicationSid:
-          String(publication?.trackSid ?? publication?.sid ?? "") || null,
-      },
-    );
+      const cameraTrackSettings = getTrackSettingsSize(track);
+      const requestedQuality =
+        options?.quality ?? CAMERA_CAPTURE_DEFAULT_QUALITY;
+      const cameraMaxBitrate = Math.min(
+        resolveCameraMaxBitrate(track),
+        liveKitMediaPolicy.cameraMaxBitrate,
+      );
+      const cameraMaxFramerate = Math.min(
+        liveKitMediaPolicy.cameraMaxFps,
+        cameraTrackSettings.fps,
+      );
 
-    localLiveKitCameraStream = stream;
-    localLiveKitCameraPublication = publication;
-    deps.onCameraShareChanged?.(true);
-
-    const selfUserId = deps.getSelfUserId();
-    if (selfUserId) {
-      remoteMediaUi.attachRemoteTrack({
-        key: "local:camera",
-        userId: selfUserId,
-        kind: "video",
-        sourceType: "camera",
-        stream,
-      });
-    }
-
-    track.addEventListener("ended", () => {
-      emitMediaDebugLog(
-        "warn",
-        "camera",
-        "track-ended",
-        "Kamera track ended olayı ile sonlandı",
+      const publication = await liveKitRoom.localParticipant.publishTrack(
+        track,
         {
-          trackId: track.id,
+          source: sdk.Track?.Source?.Camera,
+          simulcast: liveKitMediaPolicy.simulcast,
+          videoCodec: liveKitMediaPolicy.preferredVideoCodec,
+          degradationPreference: "balanced",
+          videoEncoding: {
+            maxBitrate: cameraMaxBitrate,
+            maxFramerate: cameraMaxFramerate,
+          },
         },
       );
-      stopLiveKitCameraShare();
-      deps.setVoiceState("Kamera paylaşımı sonlandı", false);
-    });
 
-    emitLiveKitLobbySnapshot();
-    return true;
+      if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+        unpublishLiveKitPublication(publication);
+        stopMediaStream(stream);
+        return false;
+      }
+
+      emitMediaDebugLog(
+        "info",
+        "camera",
+        "publish-started",
+        "Kamera yayını başlatıldı",
+        {
+          requestedQuality,
+          actualQuality: cameraTrackSettings,
+          encoding: {
+            maxBitrate: cameraMaxBitrate,
+            maxFramerate: cameraMaxFramerate,
+            simulcast: liveKitMediaPolicy.simulcast,
+            codec: liveKitMediaPolicy.preferredVideoCodec,
+          },
+          profile: liveKitMediaPolicy.qualityProfile,
+          publicationSid:
+            String(publication?.trackSid ?? publication?.sid ?? "") || null,
+        },
+      );
+
+      localLiveKitCameraStream = stream;
+      localLiveKitCameraPublication = publication;
+      monitorLocalVideoPublication("camera", publication, requestedQuality);
+      deps.onCameraShareChanged?.(true);
+
+      const selfUserId = deps.getSelfUserId();
+      if (selfUserId) {
+        remoteMediaUi.attachRemoteTrack({
+          key: "local:camera",
+          userId: selfUserId,
+          kind: "video",
+          sourceType: "camera",
+          stream,
+        });
+      }
+
+      track.addEventListener("ended", () => {
+        emitMediaDebugLog(
+          "warn",
+          "camera",
+          "track-ended",
+          "Kamera track ended olayı ile sonlandı",
+          {
+            trackId: track.id,
+          },
+        );
+        stopLiveKitCameraShare();
+        deps.setVoiceState("Kamera paylaşımı sonlandı", false);
+      });
+
+      emitLiveKitLobbySnapshot();
+      return true;
+    } catch (error) {
+      stopMediaStream(stream);
+      throw error;
+    } finally {
+      if (pendingLiveKitCameraStream === stream) {
+        pendingLiveKitCameraStream = null;
+      }
+    }
   };
 
   const toggleLiveKitScreenShare = async (
     options?: ScreenShareOptions,
   ): Promise<boolean> => {
+    const operationVersion = mediaOperationVersion;
+
     if (localLiveKitScreenPublication) {
       emitMediaDebugLog(
         "info",
@@ -2318,85 +2840,125 @@ export const createVoiceController = (
     }
 
     const sdk = await ensureLiveKitSdk();
+    if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+      return false;
+    }
+
     const stream = await createScreenCaptureStream(options);
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      stopMediaStream(stream);
-      throw new Error("ekran izi alinamadi");
-    }
+    pendingLiveKitScreenStream = stream;
 
-    const screenTrackSettings = getTrackSettingsSize(track);
-    const isWindowSource = isWindowCaptureSource(options?.sourceId);
-    const screenBaseMaxBitrate = resolveScreenMaxBitrate(track);
-    const screenMaxBitrate = isWindowSource
-      ? Math.min(screenBaseMaxBitrate, 4_000_000)
-      : screenBaseMaxBitrate;
-    const screenMaxFramerate = isWindowSource
-      ? Math.min(30, screenTrackSettings.fps)
-      : Math.min(60, screenTrackSettings.fps);
+    try {
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        stopMediaStream(stream);
+        throw new Error("ekran izi alinamadi");
+      }
 
-    const publication = await liveKitRoom.localParticipant.publishTrack(track, {
-      source: sdk.Track?.Source?.ScreenShare,
-      simulcast: true,
-      videoEncoding: {
-        maxBitrate: screenMaxBitrate,
-        maxFramerate: screenMaxFramerate,
-      },
-    });
+      if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+        stopMediaStream(stream);
+        return false;
+      }
 
-    emitMediaDebugLog(
-      "info",
-      "screen",
-      "publish-started",
-      "Ekran yayını başlatıldı",
-      {
-        sourceId: options?.sourceId ?? null,
-        sourceType: isWindowSource ? "window" : "screen",
-        requestedQuality: options?.quality ?? SCREEN_CAPTURE_DEFAULT_QUALITY,
-        actualQuality: screenTrackSettings,
-        encoding: {
-          maxBitrate: screenMaxBitrate,
-          maxFramerate: screenMaxFramerate,
-          simulcast: true,
-        },
-        stabilityCapApplied: isWindowSource,
-        publicationSid:
-          String(publication?.trackSid ?? publication?.sid ?? "") || null,
-      },
-    );
+      const screenTrackSettings = getTrackSettingsSize(track);
+      const isWindowSource = isWindowCaptureSource(options?.sourceId);
+      const requestedQuality =
+        options?.quality ?? SCREEN_CAPTURE_DEFAULT_QUALITY;
+      const screenBaseMaxBitrate = resolveScreenMaxBitrate(track);
+      const screenMaxBitrate = isWindowSource
+        ? Math.min(
+            screenBaseMaxBitrate,
+            liveKitMediaPolicy.screenMaxBitrate,
+            5_000_000,
+          )
+        : Math.min(screenBaseMaxBitrate, liveKitMediaPolicy.screenMaxBitrate);
+      const screenMaxFramerate = isWindowSource
+        ? Math.min(30, liveKitMediaPolicy.screenMaxFps, screenTrackSettings.fps)
+        : Math.min(liveKitMediaPolicy.screenMaxFps, screenTrackSettings.fps);
 
-    localLiveKitScreenStream = stream;
-    localLiveKitScreenPublication = publication;
-    deps.onScreenShareChanged?.(true);
-
-    const selfUserId = deps.getSelfUserId();
-    if (selfUserId) {
-      remoteMediaUi.attachRemoteTrack({
-        key: "local:screen",
-        userId: selfUserId,
-        kind: "video",
-        sourceType: "screen",
-        stream,
-      });
-    }
-
-    track.addEventListener("ended", () => {
-      emitMediaDebugLog(
-        "warn",
-        "screen",
-        "track-ended",
-        "Ekran track ended olayı ile sonlandı",
+      const publication = await liveKitRoom.localParticipant.publishTrack(
+        track,
         {
-          trackId: track.id,
-          sourceId: options?.sourceId ?? null,
+          source: sdk.Track?.Source?.ScreenShare,
+          simulcast: liveKitMediaPolicy.simulcast,
+          videoCodec: liveKitMediaPolicy.preferredVideoCodec,
+          degradationPreference: "maintain-resolution",
+          videoEncoding: {
+            maxBitrate: screenMaxBitrate,
+            maxFramerate: screenMaxFramerate,
+          },
         },
       );
-      stopLiveKitScreenShare();
-      deps.setVoiceState("Ekran paylaşımı sonlandı", false);
-    });
 
-    emitLiveKitLobbySnapshot();
-    return true;
+      if (operationVersion !== mediaOperationVersion || !liveKitRoom) {
+        unpublishLiveKitPublication(publication);
+        stopMediaStream(stream);
+        return false;
+      }
+
+      emitMediaDebugLog(
+        "info",
+        "screen",
+        "publish-started",
+        "Ekran yayını başlatıldı",
+        {
+          sourceId: options?.sourceId ?? null,
+          sourceType: isWindowSource ? "window" : "screen",
+          requestedQuality,
+          actualQuality: screenTrackSettings,
+          encoding: {
+            maxBitrate: screenMaxBitrate,
+            maxFramerate: screenMaxFramerate,
+            simulcast: liveKitMediaPolicy.simulcast,
+            codec: liveKitMediaPolicy.preferredVideoCodec,
+          },
+          profile: liveKitMediaPolicy.qualityProfile,
+          stabilityCapApplied: isWindowSource,
+          publicationSid:
+            String(publication?.trackSid ?? publication?.sid ?? "") || null,
+        },
+      );
+
+      localLiveKitScreenStream = stream;
+      localLiveKitScreenPublication = publication;
+      monitorLocalVideoPublication("screen", publication, requestedQuality);
+      deps.onScreenShareChanged?.(true);
+
+      const selfUserId = deps.getSelfUserId();
+      if (selfUserId) {
+        remoteMediaUi.attachRemoteTrack({
+          key: "local:screen",
+          userId: selfUserId,
+          kind: "video",
+          sourceType: "screen",
+          stream,
+        });
+      }
+
+      track.addEventListener("ended", () => {
+        emitMediaDebugLog(
+          "warn",
+          "screen",
+          "track-ended",
+          "Ekran track ended olayı ile sonlandı",
+          {
+            trackId: track.id,
+            sourceId: options?.sourceId ?? null,
+          },
+        );
+        stopLiveKitScreenShare();
+        deps.setVoiceState("Ekran paylaşımı sonlandı", false);
+      });
+
+      emitLiveKitLobbySnapshot();
+      return true;
+    } catch (error) {
+      stopMediaStream(stream);
+      throw error;
+    } finally {
+      if (pendingLiveKitScreenStream === stream) {
+        pendingLiveKitScreenStream = null;
+      }
+    }
   };
 
   const startVoice = async (): Promise<void> => {
@@ -2415,15 +2977,20 @@ export const createVoiceController = (
   };
 
   const stopVoice = async (): Promise<void> => {
+    mediaOperationVersion += 1;
     disposeLiveKit();
     stopLocalAudioStream();
     deps.setVoiceState("Ses durduruldu", false);
   };
 
-  const cleanupForLobbyExit = (): void => {
+  const shutdownMedia = async (): Promise<void> => {
     emitLocalSpeaking(false);
     stopMicTest();
-    void stopVoice();
+    await stopVoice();
+  };
+
+  const cleanupForLobbyExit = (): void => {
+    void shutdownMedia();
   };
 
   const handleMicrophoneChange = async (deviceId: string): Promise<void> => {
@@ -2655,6 +3222,7 @@ export const createVoiceController = (
     toggleScreenShare,
     createCameraTestStream,
     createScreenTestStream,
+    shutdownMedia,
     startVoice,
     stopVoice,
     handleMicrophoneChange,

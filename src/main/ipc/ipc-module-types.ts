@@ -50,6 +50,8 @@ export interface DesktopIpcModuleHelpers {
   ) => Promise<T>;
   connectRealtimeForCurrentSession: () => void;
   ensureRealtimeConnected: () => void;
+  getActiveLobbyId: () => string;
+  setActiveLobbyId: (lobbyId: string) => void;
   isAutoJoinLobbyEnabled: () => boolean;
   setAutoJoinLobbyEnabled: (value: boolean) => void;
   clearSessionAndRealtime: () => void;

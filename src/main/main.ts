@@ -9,6 +9,7 @@ import {
   backendBaseUrl,
   desktopRtcConfig,
   liveKitDefaultRoom,
+  mediaQualityProfile,
   loadedEnvPath,
 } from "./config";
 import { DesktopPreferencesStore } from "./desktop-preferences-store";
@@ -119,6 +120,7 @@ registerDesktopIpcHandlers({
     backendBaseUrl,
     liveKitDefaultRoom,
     desktopRtcConfig,
+    mediaQualityProfile,
   }),
   getDesktopPreferences: () => desktopPreferencesStore.get(),
   updateDesktopPreferences: (patch) => {

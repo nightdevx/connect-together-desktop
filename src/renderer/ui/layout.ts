@@ -111,12 +111,12 @@ export const buildDesktopLayout = (): string => {
                 <span class="rail-tooltip">Arkadaşlar</span>
               </button>
 
-              <button id="navLobby" class="rail-icon w-12 h-14 rounded-2xl border border-border bg-surface-2 text-text-secondary text-[10px] font-bold flex flex-col items-center justify-center gap-1 cursor-pointer" type="button" title="Lobi">
+              <button id="navLobby" class="rail-icon w-12 h-14 rounded-2xl border border-border bg-surface-2 text-text-secondary text-[10px] font-bold flex flex-col items-center justify-center gap-1 cursor-pointer" type="button" title="Lobiler">
                 <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6.2l-3.54 2.95a1 1 0 0 1-1.64-.77V17H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm1 2v9h2.62a1 1 0 0 1 1 1v1.24L12 15.2a1 1 0 0 1 .64-.2H19V6H6Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm4 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm4 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/>
                 </svg>
-                <span class="leading-none">Lobi</span>
-                <span class="rail-tooltip">Lobi</span>
+                <span class="leading-none">Lobiler</span>
+                <span class="rail-tooltip">Lobiler</span>
               </button>
             </div>
 
@@ -135,11 +135,18 @@ export const buildDesktopLayout = (): string => {
             <!-- Lobby Sidebar -->
             <section id="lobbySidebar" class="side-view min-h-0 grid grid-rows-[auto_1fr]">
               <header class="side-view-header px-4 pt-4 pb-3 border-b border-border">
-                <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Lobi</h2>
+                <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Lobiler</h2>
               </header>
               <div class="side-view-body overflow-auto px-3 py-3">
-                <p class="text-text-muted text-xs mb-2">Sohbette olan arkadaşlar</p>
-                <ul id="members" class="list-none m-0 p-0 flex flex-col gap-2"></ul>
+                <div class="lobby-create-card rounded-xl border border-border bg-surface-2/35 p-3 mb-3">
+                  <p class="text-text-muted text-[11px] mb-2 uppercase tracking-wider">Yeni Lobi</p>
+                  <form id="lobbyCreateForm" class="lobby-create-form flex items-center gap-2">
+                    <input id="lobbyCreateInput" type="text" maxlength="64" placeholder="Yeni lobi adı" class="flex-1 text-xs" />
+                    <button id="lobbyCreateButton" class="btn-secondary h-8 px-3 text-xs" type="submit">Oluştur</button>
+                  </form>
+                </div>
+                <ul id="lobbiesList" class="list-none m-0 p-0 flex flex-col gap-2 mb-2"></ul>
+                <ul id="members" class="hidden list-none m-0 p-0 flex-col gap-2"></ul>
               </div>
             </section>
 
@@ -154,6 +161,7 @@ export const buildDesktopLayout = (): string => {
                   <span class="text-text-muted text-[11px] uppercase tracking-wider">Toplam Kullanıcı</span>
                   <strong id="usersDirectoryCount" class="block mt-1 text-text-primary text-lg font-bold">0</strong>
                 </div>
+                <ul id="usersSidebarDirectoryList" class="list-none mt-3 p-0 flex flex-col gap-2"></ul>
               </div>
             </section>
 
@@ -286,9 +294,33 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Lobby Page -->
             <section id="lobbyPage" class="stage-page min-h-0 h-full">
-              <div class="lobby-stage-shell h-full min-h-0">
+              <div id="lobbyStageShell" class="lobby-stage-shell h-full min-h-0">
                 <section class="lobby-stage-main min-h-0">
                   <strong id="memberCount" class="hidden">0</strong>
+                  <section
+                    id="lobbyJoinEmptyState"
+                    class="lobby-join-empty-state hidden"
+                    aria-live="polite"
+                  >
+                    <div class="lobby-join-empty-state-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16Zm-1 4a1 1 0 1 1 2 0v3h3a1 1 0 1 1 0 2h-4a1 1 0 0 1-1-1V8Z"/>
+                      </svg>
+                    </div>
+                    <h3 class="lobby-join-empty-state-title">Henüz bir lobiye katılmadın</h3>
+                    <p class="lobby-join-empty-state-copy">
+                      Soldaki listeden istediğin bir lobiye tıklayarak katılabilir, istediğin zaman çıkış yapabilirsin.
+                    </p>
+                  </section>
+                  <button
+                    id="lobbyChatReopenButton"
+                    class="lobby-chat-reopen"
+                    type="button"
+                    aria-label="Sohbet panelini aç"
+                    title="Sohbet panelini aç"
+                  >
+                    Sohbeti Aç
+                  </button>
                   <div id="participantGrid" class="participant-stage-grid participant-stage-grid--full h-full"></div>
                   <div id="participantHoverControls" class="participant-hover-controls" aria-label="Sahne Kontrolleri">
                     <button class="participant-hover-control" type="button" data-quick-control="mic" title="Mikrofon" aria-label="Mikrofon">
@@ -334,10 +366,30 @@ export const buildDesktopLayout = (): string => {
                   </div>
                 </section>
 
-                <aside class="lobby-chat-panel" aria-label="Lobi Mesajlaşma">
+                <aside id="lobbyChatPanel" class="lobby-chat-panel" aria-label="Lobi Mesajlaşma" data-collapsed="false">
                   <header class="lobby-chat-header">
-                    <h3 class="lobby-chat-title">Lobi Sohbeti</h3>
-                    <p class="lobby-chat-subtitle">Mesajlar anlık güncellenir</p>
+                    <div class="lobby-chat-header-copy">
+                      <h3 class="lobby-chat-title">Lobi Sohbeti</h3>
+                      <p class="lobby-chat-subtitle">Mesajlar anlık güncellenir</p>
+                    </div>
+                    <button
+                      id="lobbyChatToggleButton"
+                      class="lobby-chat-toggle"
+                      type="button"
+                      aria-label="Sohbet panelini kapat"
+                      aria-expanded="true"
+                      title="Sohbet panelini kapat"
+                    >
+                      <span class="lobby-chat-toggle-label">Daralt</span>
+                      <svg
+                        class="lobby-chat-toggle-icon"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41Z" />
+                      </svg>
+                    </button>
                   </header>
                   <ol id="lobbyChatList" class="lobby-chat-list" aria-live="polite"></ol>
                   <form id="lobbyChatForm" class="lobby-chat-form">
@@ -351,10 +403,22 @@ export const buildDesktopLayout = (): string => {
 
             <!-- Users Page -->
             <section id="usersPage" class="stage-page hidden flex flex-col gap-4">
-              <section class="rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle">
+              <section id="usersPageDirectorySection" class="rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle">
                 <h2 class="text-xs font-bold tracking-[0.1em] uppercase text-text-secondary m-0">Arkadaş Listesi</h2>
                 <p class="mt-1 text-text-muted text-xs">Uygulamadaki kullanıcıları ve şu an çevrimiçi olup olmadıklarını buradan görebilirsin.</p>
                 <ul id="usersDirectoryList" class="list-none mt-4 p-0 flex flex-col gap-2"></ul>
+              </section>
+
+              <section id="directMessageSection" class="direct-message-shell rounded-2xl border border-border bg-surface-2/30 p-5 glass-subtle hidden">
+                <header class="direct-message-header mb-3">
+                  <p id="directMessageTitle" class="mt-1 text-text-muted text-xs">Mesajlaşmak için arkadaş listesinden bir kullanıcı seç.</p>
+                </header>
+                <ol id="directMessageList" class="lobby-chat-list direct-message-list" aria-live="polite"></ol>
+                <form id="directMessageForm" class="lobby-chat-form direct-message-form mt-3">
+                  <label for="directMessageInput" class="sr-only">Direkt mesaj</label>
+                  <textarea id="directMessageInput" class="lobby-chat-input direct-message-input" rows="2" maxlength="1200" placeholder="Direkt mesaj yaz"></textarea>
+                  <button id="directMessageSendButton" class="btn-primary lobby-chat-send direct-message-send" type="submit">Gönder</button>
+                </form>
               </section>
             </section>
 
@@ -640,6 +704,7 @@ export const buildDesktopLayout = (): string => {
           <h3 id="participantAudioMenuTitle" class="participant-audio-menu-title">Ses Ayarları</h3>
         </div>
         <button id="participantAudioMuteToggle" class="participant-audio-menu-action" type="button">Bu kullanıcıyı sustur</button>
+        <button id="participantAudioDirectMessage" class="participant-audio-menu-action participant-audio-menu-action-secondary" type="button">Mesaj gönder</button>
         <label class="participant-audio-menu-label" for="participantAudioVolumeSlider">Ses seviyesi <strong id="participantAudioVolumeValue">100%</strong></label>
         <input id="participantAudioVolumeSlider" class="participant-audio-menu-slider ct-range" type="range" min="0" max="200" step="1" value="100" />
         <div class="participant-audio-menu-presets">
@@ -647,6 +712,14 @@ export const buildDesktopLayout = (): string => {
           <button id="participantAudioPreset150" class="participant-audio-menu-preset" type="button">150%</button>
           <button id="participantAudioPreset200" class="participant-audio-menu-preset" type="button">200%</button>
         </div>
+      </section>
+
+      <section id="lobbyContextMenu" class="lobby-context-menu hidden" aria-hidden="true" role="menu" aria-label="Lobi işlemleri">
+        <div class="lobby-context-menu-title-row">
+          <h3 id="lobbyContextMenuTitle" class="lobby-context-menu-title">Lobi işlemleri</h3>
+        </div>
+        <button id="lobbyContextRename" class="lobby-context-menu-action" type="button" role="menuitem">Lobiyi düzenle</button>
+        <button id="lobbyContextDelete" class="lobby-context-menu-action danger" type="button" role="menuitem">Lobiyi sil</button>
       </section>
 
       <section id="toastContainer" class="toast-stack" aria-live="polite" aria-atomic="false"></section>

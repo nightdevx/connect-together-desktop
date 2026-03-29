@@ -19,10 +19,30 @@ export type RealtimeEvent =
       reconnectAttempts: number;
       connected: boolean;
     }
-  | { type: "lobby-state"; members: LobbyMember[]; revision?: number }
-  | { type: "lobby-member-joined"; member: LobbyMember; revision?: number }
-  | { type: "lobby-member-updated"; member: LobbyMember; revision?: number }
-  | { type: "lobby-member-left"; userId: string; revision?: number }
+  | {
+      type: "lobby-state";
+      lobbyId?: string;
+      members: LobbyMember[];
+      revision?: number;
+    }
+  | {
+      type: "lobby-member-joined";
+      lobbyId?: string;
+      member: LobbyMember;
+      revision?: number;
+    }
+  | {
+      type: "lobby-member-updated";
+      lobbyId?: string;
+      member: LobbyMember;
+      revision?: number;
+    }
+  | {
+      type: "lobby-member-left";
+      lobbyId?: string;
+      userId: string;
+      revision?: number;
+    }
   | { type: "lobby-chat-history"; messages: LobbyChatMessage[] }
   | { type: "lobby-message"; chatMessage: LobbyChatMessage }
   | { type: "media-producer-available"; payload: MediaProducerPayload }
@@ -39,6 +59,7 @@ export class RealtimeClient {
   private shouldRun = false;
   private reconnectAttempts = 0;
   private token: string | null = null;
+  private lobbyId: string | null = null;
   private onEvent: ((event: RealtimeEvent) => void) | null = null;
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -57,9 +78,14 @@ export class RealtimeClient {
     });
   }
 
-  public connect(token: string, onEvent: (event: RealtimeEvent) => void): void {
+  public connect(
+    token: string,
+    lobbyId: string,
+    onEvent: (event: RealtimeEvent) => void,
+  ): void {
     this.onEvent = onEvent;
     const normalizedToken = token.trim();
+    const normalizedLobbyID = lobbyId.trim();
     if (normalizedToken.length === 0) {
       this.onEvent({
         type: "connection",
@@ -69,11 +95,22 @@ export class RealtimeClient {
       return;
     }
 
+    if (normalizedLobbyID.length === 0) {
+      this.onEvent({
+        type: "connection",
+        status: "error",
+        detail: "gecersiz lobby id",
+      });
+      return;
+    }
+
     const tokenChanged = this.token !== normalizedToken;
+    const lobbyChanged = this.lobbyId !== normalizedLobbyID;
     this.token = normalizedToken;
+    this.lobbyId = normalizedLobbyID;
     this.shouldRun = true;
 
-    if ((this.connected || this.connecting) && tokenChanged) {
+    if ((this.connected || this.connecting) && (tokenChanged || lobbyChanged)) {
       this.closeActiveSocket(1000, "token-updated");
       this.connected = false;
       this.connecting = false;
@@ -99,6 +136,7 @@ export class RealtimeClient {
     this.connecting = false;
     this.connected = false;
     this.token = null;
+    this.lobbyId = null;
     this.lastSocketErrorDetail = null;
 
     if (!wasActive) {
@@ -120,14 +158,19 @@ export class RealtimeClient {
   }
 
   private openLobbySocket(): void {
-    if (!this.shouldRun || this.connecting || this.token === null) {
+    if (
+      !this.shouldRun ||
+      this.connecting ||
+      this.token === null ||
+      this.lobbyId === null
+    ) {
       return;
     }
 
     this.clearReconnectTimer();
     this.connecting = true;
 
-    const socketUrl = this.buildLobbySocketUrl(this.token);
+    const socketUrl = this.buildLobbySocketUrl(this.token, this.lobbyId);
     const socket = new WebSocket(socketUrl);
     this.socket = socket;
     this.lastSocketErrorDetail = null;
@@ -188,12 +231,13 @@ export class RealtimeClient {
     });
   }
 
-  private buildLobbySocketUrl(token: string): string {
+  private buildLobbySocketUrl(token: string, lobbyId: string): string {
     const parsedBase = new URL(this.baseUrl);
     parsedBase.protocol = parsedBase.protocol === "https:" ? "wss:" : "ws:";
     parsedBase.pathname = "/media/livekit/lobby/ws";
     parsedBase.search = "";
     parsedBase.searchParams.set("access_token", token);
+    parsedBase.searchParams.set("lobbyId", lobbyId);
     return parsedBase.toString();
   }
 
@@ -242,47 +286,39 @@ export class RealtimeClient {
     };
 
     const eventType = typeof source.type === "string" ? source.type : "";
+    const currentLobbyID = this.lobbyId;
     const revision =
       typeof source.revision === "number" && Number.isFinite(source.revision)
         ? Math.max(0, Math.floor(source.revision))
         : undefined;
 
     if (eventType === "lobby-state" && Array.isArray(source.members)) {
-      const event: RealtimeEvent = {
+      this.onEvent?.({
         type: "lobby-state",
+        ...(currentLobbyID ? { lobbyId: currentLobbyID } : {}),
         members: source.members,
-      };
-      if (revision !== undefined) {
-        event.revision = revision;
-      }
-
-      this.onEvent?.(event);
+        ...(revision !== undefined ? { revision } : {}),
+      });
       return;
     }
 
     if (eventType === "lobby-member-joined" && source.member) {
-      const event: RealtimeEvent = {
+      this.onEvent?.({
         type: "lobby-member-joined",
+        ...(currentLobbyID ? { lobbyId: currentLobbyID } : {}),
         member: source.member,
-      };
-      if (revision !== undefined) {
-        event.revision = revision;
-      }
-
-      this.onEvent?.(event);
+        ...(revision !== undefined ? { revision } : {}),
+      });
       return;
     }
 
     if (eventType === "lobby-member-updated" && source.member) {
-      const event: RealtimeEvent = {
+      this.onEvent?.({
         type: "lobby-member-updated",
+        ...(currentLobbyID ? { lobbyId: currentLobbyID } : {}),
         member: source.member,
-      };
-      if (revision !== undefined) {
-        event.revision = revision;
-      }
-
-      this.onEvent?.(event);
+        ...(revision !== undefined ? { revision } : {}),
+      });
       return;
     }
 
@@ -290,15 +326,12 @@ export class RealtimeClient {
       eventType === "lobby-member-left" &&
       typeof source.userId === "string"
     ) {
-      const event: RealtimeEvent = {
+      this.onEvent?.({
         type: "lobby-member-left",
+        ...(currentLobbyID ? { lobbyId: currentLobbyID } : {}),
         userId: source.userId,
-      };
-      if (revision !== undefined) {
-        event.revision = revision;
-      }
-
-      this.onEvent?.(event);
+        ...(revision !== undefined ? { revision } : {}),
+      });
       return;
     }
 
@@ -338,7 +371,7 @@ export class RealtimeClient {
   }
 
   private scheduleReconnect(): void {
-    if (!this.shouldRun || this.token === null) {
+    if (!this.shouldRun || this.token === null || this.lobbyId === null) {
       return;
     }
 

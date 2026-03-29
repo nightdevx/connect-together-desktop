@@ -97,6 +97,29 @@ export const backendBaseUrl =
 export const liveKitDefaultRoom =
   readEnv("CT_LIVEKIT_ROOM", "LIVEKIT_DEFAULT_ROOM") || "main-lobby";
 
+const normalizeMediaQualityProfile = (
+  value: string | undefined,
+): "balanced" | "high" | "low-bandwidth" => {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (normalized === "high") {
+    return "high";
+  }
+
+  if (
+    normalized === "low-bandwidth" ||
+    normalized === "low_bandwidth" ||
+    normalized === "low"
+  ) {
+    return "low-bandwidth";
+  }
+
+  return "balanced";
+};
+
+export const mediaQualityProfile = normalizeMediaQualityProfile(
+  readEnv("CT_MEDIA_QUALITY_PROFILE", "LIVEKIT_QUALITY_PROFILE"),
+);
+
 export const desktopRtcConfig = buildDesktopRtcConfig();
 
 function buildDesktopRtcConfig(): DesktopRtcConfig {

@@ -5,7 +5,9 @@ export type UiSoundEffect =
   | "headphone-off"
   | "connect"
   | "disconnect"
-  | "participant-share-on";
+  | "participant-share-on"
+  | "lobby-member-join"
+  | "lobby-member-leave";
 
 interface UiSoundController {
   setEnabled: (enabled: boolean) => void;
@@ -216,6 +218,40 @@ export const createUiSoundController = (): UiSoundController => {
           type: "sine",
           duration: 0.08,
           peak: 0.028,
+          when: now + 0.055,
+        });
+        return;
+      }
+      case "lobby-member-join": {
+        playTone(ctx, {
+          frequency: 520,
+          type: "sine",
+          duration: 0.06,
+          peak: 0.026,
+          when: now,
+        });
+        playTone(ctx, {
+          frequency: 730,
+          type: "triangle",
+          duration: 0.08,
+          peak: 0.028,
+          when: now + 0.05,
+        });
+        return;
+      }
+      case "lobby-member-leave": {
+        playTone(ctx, {
+          frequency: 700,
+          type: "triangle",
+          duration: 0.07,
+          peak: 0.024,
+          when: now,
+        });
+        playTone(ctx, {
+          frequency: 480,
+          type: "sine",
+          duration: 0.09,
+          peak: 0.025,
           when: now + 0.055,
         });
         return;

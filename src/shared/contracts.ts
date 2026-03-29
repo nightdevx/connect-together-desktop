@@ -64,16 +64,31 @@ export interface LobbyMember {
   screenSharing: boolean;
   cameraProducerId: string | null;
   screenProducerId: string | null;
+  cameraSource?: string | null;
+  screenSource?: string | null;
+  cameraCodec?: string | null;
+  screenCodec?: string | null;
+}
+
+export interface LobbyDescriptor {
+  id: string;
+  name: string;
+  room: string;
+  createdAt: string;
+  createdBy: string;
+  memberCount: number;
 }
 
 export interface LobbyChatMessage {
   id: string;
-  channel: "lobby";
+  channel: string;
   userId: string;
   username: string;
   body: string;
   createdAt: string;
 }
+
+export type DirectChatMessage = LobbyChatMessage;
 
 export type MediaProducerKind = "audio" | "video";
 export type MediaSourceType = "microphone" | "camera" | "screen";

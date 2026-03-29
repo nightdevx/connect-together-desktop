@@ -1,5 +1,7 @@
 import type {
   ChangePasswordRequest,
+  DirectChatMessage,
+  LobbyDescriptor,
   LobbyChatMessage,
   LobbyMember,
   LoginRequest,
@@ -52,6 +54,7 @@ export interface DesktopRuntimeConfig {
   backendBaseUrl: string;
   liveKitDefaultRoom: string;
   desktopRtcConfig: DesktopRtcConfig;
+  mediaQualityProfile: "balanced" | "high" | "low-bandwidth";
 }
 
 export interface DesktopPreferences {
@@ -81,6 +84,7 @@ export interface DesktopUpdateState {
 
 export interface DesktopRealtimeEvent {
   type: string;
+  lobbyId?: string;
   revision?: number;
   status?: string;
   detail?: string;
@@ -141,13 +145,39 @@ export interface DesktopApi {
   changePassword: (
     payload: ChangePasswordRequest,
   ) => Promise<DesktopResult<{ changed: boolean }>>;
+  listLobbies: () => Promise<DesktopResult<{ lobbies: LobbyDescriptor[] }>>;
+  createLobby: (payload: {
+    name: string;
+  }) => Promise<DesktopResult<{ lobby: LobbyDescriptor }>>;
+  updateLobby: (payload: {
+    lobbyId: string;
+    name: string;
+  }) => Promise<DesktopResult<{ lobby: LobbyDescriptor }>>;
+  deleteLobby: (payload: {
+    lobbyId: string;
+  }) => Promise<DesktopResult<{ deleted: boolean; lobbyId?: string }>>;
+  selectLobby: (payload: {
+    lobbyId: string;
+  }) => Promise<DesktopResult<{ lobbyId: string }>>;
+  getActiveLobby: () => Promise<DesktopResult<{ lobbyId: string }>>;
   getLobbyState: () => Promise<DesktopResult<LobbyStateSnapshot>>;
+  getLobbyStateById: (payload: {
+    lobbyId: string;
+  }) => Promise<DesktopResult<LobbyStateSnapshot>>;
   chatListLobbyMessages: (payload?: {
     limit?: number;
   }) => Promise<DesktopResult<{ messages: LobbyChatMessage[] }>>;
   chatSendLobbyMessage: (payload: {
     body: string;
   }) => Promise<DesktopResult<{ message: LobbyChatMessage }>>;
+  chatListDirectMessages: (payload: {
+    peerUserId: string;
+    limit?: number;
+  }) => Promise<DesktopResult<{ messages: DirectChatMessage[] }>>;
+  chatSendDirectMessage: (payload: {
+    peerUserId: string;
+    body: string;
+  }) => Promise<DesktopResult<{ message: DirectChatMessage }>>;
   realtimeConnect: () => Promise<DesktopResult<{ connected: boolean }>>;
   lobbyJoin: () => Promise<DesktopResult<{ accepted: boolean }>>;
   lobbyLeave: () => Promise<DesktopResult<{ accepted: boolean }>>;
@@ -242,6 +272,17 @@ export interface DesktopApi {
       name: string;
       token: string;
       expiresAt: string;
+      mediaPolicy?: {
+        qualityProfile?: "balanced" | "high" | "low-bandwidth";
+        preferredVideoCodec: string;
+        backupVideoCodec: string;
+        cameraMaxBitrate: number;
+        cameraMaxFps: number;
+        screenMaxBitrate: number;
+        screenMaxFps: number;
+        simulcast: boolean;
+        dynacast: boolean;
+      };
     }>
   >;
   onRealtimeEvent: (

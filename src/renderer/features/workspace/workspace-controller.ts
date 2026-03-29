@@ -141,14 +141,14 @@ export const createWorkspaceController = (
         updateDesktopPreferenceToggles();
         setStatus(
           closeToTrayOnClose
-            ? "Kapat tusu tepsiye gonderme moduna alindi"
-            : "Kapat tusu uygulamayi tamamen kapatacak",
+            ? "Kapat tuşu tepsiye gönderme moduna alındı"
+            : "Kapat tuşu uygulamayı tamamen kapatacak",
           false,
         );
       } catch {
         closeToTrayOnClose = !closeToTrayOnClose;
         updateDesktopPreferenceToggles();
-        setStatus("Tepsi ayari guncellenemedi", true);
+        setStatus("Tepsi ayarı güncellenemedi", true);
       }
     });
 
@@ -164,14 +164,14 @@ export const createWorkspaceController = (
         updateDesktopPreferenceToggles();
         setStatus(
           launchAtStartup
-            ? "Windows baslangicinda otomatik calisma acildi"
-            : "Windows baslangicinda otomatik calisma kapatildi",
+            ? "Windows başlangıcında otomatik çalışma açıldı"
+            : "Windows başlangıcında otomatik çalışma kapatıldı",
           false,
         );
       } catch {
         launchAtStartup = !launchAtStartup;
         updateDesktopPreferenceToggles();
-        setStatus("Baslangic ayari guncellenemedi", true);
+        setStatus("Başlangıç ayarı güncellenemedi", true);
       }
     });
 
@@ -187,14 +187,14 @@ export const createWorkspaceController = (
         updateDesktopPreferenceToggles();
         setStatus(
           gpuAccelerationEnabled
-            ? "GPU hizlandirma acildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin."
-            : "GPU hizlandirma kapatildi. Degisikligin uygulanmasi icin uygulamayi yeniden baslatin.",
+            ? "GPU hızlandırma açıldı. Değişikliğin uygulanması için uygulamayı yeniden başlatın."
+            : "GPU hızlandırma kapatıldı. Değişikliğin uygulanması için uygulamayı yeniden başlatın.",
           false,
         );
       } catch {
         gpuAccelerationEnabled = !gpuAccelerationEnabled;
         updateDesktopPreferenceToggles();
-        setStatus("GPU hizlandirma ayari guncellenemedi", true);
+        setStatus("GPU hızlandırma ayarı güncellenemedi", true);
       }
     });
 

@@ -70,6 +70,24 @@ const desktopApi: DesktopApi = {
   getRegisteredUsers: async () => {
     return ipcRenderer.invoke("desktop:auth-users");
   },
+  listLobbies: async () => {
+    return ipcRenderer.invoke("desktop:lobbies-list");
+  },
+  createLobby: async (payload) => {
+    return ipcRenderer.invoke("desktop:lobbies-create", payload);
+  },
+  updateLobby: async (payload) => {
+    return ipcRenderer.invoke("desktop:lobbies-update", payload);
+  },
+  deleteLobby: async (payload) => {
+    return ipcRenderer.invoke("desktop:lobbies-delete", payload);
+  },
+  selectLobby: async (payload) => {
+    return ipcRenderer.invoke("desktop:lobby-select", payload);
+  },
+  getActiveLobby: async () => {
+    return ipcRenderer.invoke("desktop:lobby-active");
+  },
   updateProfile: async (payload) => {
     return ipcRenderer.invoke("desktop:auth-update-profile", payload);
   },
@@ -79,11 +97,20 @@ const desktopApi: DesktopApi = {
   getLobbyState: async () => {
     return ipcRenderer.invoke("desktop:lobby-state");
   },
+  getLobbyStateById: async (payload) => {
+    return ipcRenderer.invoke("desktop:lobby-state-by-id", payload);
+  },
   chatListLobbyMessages: async (payload) => {
     return ipcRenderer.invoke("desktop:chat-list-lobby-messages", payload);
   },
   chatSendLobbyMessage: async (payload) => {
     return ipcRenderer.invoke("desktop:chat-send-lobby-message", payload);
+  },
+  chatListDirectMessages: async (payload) => {
+    return ipcRenderer.invoke("desktop:chat-list-direct-messages", payload);
+  },
+  chatSendDirectMessage: async (payload) => {
+    return ipcRenderer.invoke("desktop:chat-send-direct-message", payload);
   },
   realtimeConnect: async () => {
     return ipcRenderer.invoke("desktop:realtime-connect");

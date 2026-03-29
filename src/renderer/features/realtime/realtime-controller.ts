@@ -16,10 +16,22 @@ interface RealtimeControllerDeps {
     reconnectAttempts: number;
     connected: boolean;
   }) => void;
-  onLobbyState: (members: LobbyMemberSnapshot[], revision?: number) => void;
-  onMemberJoined: (member: LobbyMemberSnapshot, revision?: number) => void;
-  onMemberUpdated: (member: LobbyMemberSnapshot, revision?: number) => void;
-  onMemberLeft: (userId: string, revision?: number) => void;
+  onLobbyState: (
+    members: LobbyMemberSnapshot[],
+    revision?: number,
+    lobbyId?: string,
+  ) => void;
+  onMemberJoined: (
+    member: LobbyMemberSnapshot,
+    revision?: number,
+    lobbyId?: string,
+  ) => void;
+  onMemberUpdated: (
+    member: LobbyMemberSnapshot,
+    revision?: number,
+    lobbyId?: string,
+  ) => void;
+  onMemberLeft: (userId: string, revision?: number, lobbyId?: string) => void;
   onLobbyChatHistory: (messages: LobbyChatMessage[]) => void;
   onLobbyMessage: (message: LobbyChatMessage) => void;
   onAutoRejoin: () => void;
@@ -74,22 +86,22 @@ export const subscribeRealtimeEvents = (
     }
 
     if (event.type === "lobby-state" && Array.isArray(event.members)) {
-      deps.onLobbyState(event.members, event.revision);
+      deps.onLobbyState(event.members, event.revision, event.lobbyId);
       return;
     }
 
     if (event.type === "lobby-member-joined" && event.member) {
-      deps.onMemberJoined(event.member, event.revision);
+      deps.onMemberJoined(event.member, event.revision, event.lobbyId);
       return;
     }
 
     if (event.type === "lobby-member-updated" && event.member) {
-      deps.onMemberUpdated(event.member, event.revision);
+      deps.onMemberUpdated(event.member, event.revision, event.lobbyId);
       return;
     }
 
     if (event.type === "lobby-member-left" && event.userId) {
-      deps.onMemberLeft(event.userId, event.revision);
+      deps.onMemberLeft(event.userId, event.revision, event.lobbyId);
       return;
     }
 

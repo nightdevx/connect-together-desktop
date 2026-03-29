@@ -1,5 +1,7 @@
 import type {
+  DirectChatMessage,
   LobbyChatMessage,
+  LobbyDescriptor,
   RtcSignalPayload,
 } from "../../shared/contracts";
 import { createAuthViewController } from "../features/auth/auth-view-controller";
@@ -53,12 +55,14 @@ const SCREEN_FPS_STORAGE_KEY = "ct.desktop.screen-share-fps";
 const SCREEN_MODE_STORAGE_KEY = "ct.desktop.screen-share-mode";
 const INPUT_GAIN_STORAGE_KEY = "ct.desktop.input-gain-percent";
 const MEDIA_DEBUG_LOG_STORAGE_KEY = "ct.desktop.media-debug-log";
+const LOBBY_CHAT_COLLAPSED_STORAGE_KEY = "ct.desktop.lobby-chat-collapsed";
 const PARTICIPANT_AUDIO_SETTINGS_STORAGE_KEY =
   "ct.desktop.participant-audio-settings";
 const MAX_MEDIA_DEBUG_LOG_ENTRIES = 280;
 const MAX_TOAST_COUNT = 4;
 const TOAST_AUTO_HIDE_MS = 4200;
 const DEFAULT_SPEAKING_THRESHOLD_PERCENT = 24;
+const LOBBY_MEMBERS_REFRESH_INTERVAL_MS = 2500;
 
 interface ParticipantAudioSetting {
   muted: boolean;
@@ -98,11 +102,46 @@ const normalizeScreenCaptureKind = (
   return "any";
 };
 
+interface MediaQualityDefaults {
+  cameraResolution: string;
+  cameraFps: string;
+  screenResolution: string;
+  screenFps: string;
+}
+
+const resolveMediaQualityDefaults = (
+  profile: DesktopRuntimeConfig["mediaQualityProfile"] | undefined,
+): MediaQualityDefaults => {
+  switch (profile) {
+    case "high":
+      return {
+        cameraResolution: "1920x1080",
+        cameraFps: "30",
+        screenResolution: "2560x1440",
+        screenFps: "30",
+      };
+    case "low-bandwidth":
+      return {
+        cameraResolution: "960x540",
+        cameraFps: "24",
+        screenResolution: "1280x720",
+        screenFps: "20",
+      };
+    default:
+      return {
+        cameraResolution: "1280x720",
+        cameraFps: "30",
+        screenResolution: "1920x1080",
+        screenFps: "30",
+      };
+  }
+};
+
 const getDesktopApiOrThrow = (): DesktopApi => {
   const api = window.desktopApi;
   if (!api || typeof api.getRuntimeConfig !== "function") {
     throw new Error(
-      "Desktop API bulunamadi. Uygulamayi Electron ile baslatin (npm run dev).",
+      "Desktop API bulunamadı. Uygulamayı Electron ile başlatın (npm run dev).",
     );
   }
 
@@ -149,12 +188,16 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   const desktopApi = getDesktopApiOrThrow();
   const runtimeConfig: DesktopRuntimeConfig =
     await desktopApi.getRuntimeConfig();
+  const mediaQualityDefaults = resolveMediaQualityDefaults(
+    runtimeConfig.mediaQualityProfile,
+  );
   const lifecycle = createLifecycleScope();
 
   let isMuted = false;
   let isHeadphoneMuted = false;
   let isSpeaking = false;
   let voiceConnected = false;
+  let voiceConnectionInProgress = false;
   let cameraSharing = false;
   let screenSharing = false;
   let realtimeConnectionStatus: "connected" | "disconnected" | "error" =
@@ -173,11 +216,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let speakingDetectionMode: SpeakingDetectionMode = "auto";
   let manualSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
   let effectiveSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
-  let cameraResolution = "1280x720";
-  let cameraFps = "30";
+  let cameraResolution = mediaQualityDefaults.cameraResolution;
+  let cameraFps = mediaQualityDefaults.cameraFps;
   let inputGainPercent = 100;
-  let screenResolution = "1920x1080";
-  let screenFps = "30";
+  let screenResolution = mediaQualityDefaults.screenResolution;
+  let screenFps = mediaQualityDefaults.screenFps;
   let screenShareMode: ScreenCaptureKind = "any";
   let cameraTestStream: MediaStream | null = null;
   let screenTestStream: MediaStream | null = null;
@@ -186,6 +229,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let participantAudioMenuUserId: string | null = null;
   let latestDesktopUpdateState: DesktopUpdateState | null = null;
   const displayNameByUserId = new Map<string, string>();
+  const knownUsersById = new Map<string, RegisteredUserSnapshot>();
+  let activeLobbyId = runtimeConfig.liveKitDefaultRoom;
+  let activeLobbyName = "Ana Lobi";
+  let availableLobbies: LobbyDescriptor[] = [];
+  const lobbyMembersByLobbyId = new Map<string, LobbyMemberSnapshot[]>();
+  let lobbyChatCollapsed = false;
+  let directMessageTargetUserId: string | null = null;
+  const directMessagesById = new Map<string, DirectChatMessage>();
+  let directMessageRefreshTimer: number | null = null;
+  let hasOpenedUsersPageOnce = false;
+  let lobbyMemberSnapshotRefreshTimer: number | null = null;
+  let lobbyMemberSnapshotRefreshInFlight = false;
+  let lobbyContextMenuLobbyId: string | null = null;
   let remoteMediaAnnouncementInitialized = false;
   const remoteMediaStateByUserId = new Map<
     string,
@@ -202,6 +258,399 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         ),
       )
     : [];
+
+  const applyLobbyChatPanelState = (): void => {
+    dom.lobbyStageShell.classList.toggle(
+      "is-chat-collapsed",
+      lobbyChatCollapsed,
+    );
+    dom.lobbyChatPanel.dataset.collapsed = lobbyChatCollapsed
+      ? "true"
+      : "false";
+
+    dom.lobbyChatToggleButton.setAttribute(
+      "aria-expanded",
+      lobbyChatCollapsed ? "false" : "true",
+    );
+
+    const actionLabel = lobbyChatCollapsed
+      ? "Sohbet panelini aç"
+      : "Sohbet panelini kapat";
+
+    dom.lobbyChatToggleButton.title = actionLabel;
+    dom.lobbyChatToggleButton.setAttribute("aria-label", actionLabel);
+
+    const toggleLabel = dom.lobbyChatToggleButton.querySelector<HTMLElement>(
+      ".lobby-chat-toggle-label",
+    );
+    if (toggleLabel) {
+      toggleLabel.textContent = lobbyChatCollapsed ? "Aç" : "Daralt";
+    }
+
+    dom.lobbyChatReopenButton.setAttribute(
+      "aria-hidden",
+      lobbyChatCollapsed ? "false" : "true",
+    );
+    dom.lobbyChatReopenButton.disabled = !lobbyChatCollapsed;
+  };
+
+  const persistLobbyChatPanelState = (): void => {
+    try {
+      localStorage.setItem(
+        LOBBY_CHAT_COLLAPSED_STORAGE_KEY,
+        lobbyChatCollapsed ? "1" : "0",
+      );
+    } catch {
+      // no-op
+    }
+  };
+
+  const toggleLobbyChatPanel = (): void => {
+    lobbyChatCollapsed = !lobbyChatCollapsed;
+    applyLobbyChatPanelState();
+    persistLobbyChatPanelState();
+  };
+
+  const formatChatClock = (createdAt: string): string => {
+    const parsed = new Date(createdAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return "--:--";
+    }
+
+    return parsed.toLocaleTimeString("tr-TR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const resolveKnownUserName = (userId: string): string => {
+    const mappedDisplayName = displayNameByUserId.get(userId)?.trim();
+    if (mappedDisplayName && mappedDisplayName.length > 0) {
+      return mappedDisplayName;
+    }
+
+    const knownUser = knownUsersById.get(userId);
+    if (!knownUser) {
+      return userId;
+    }
+
+    const displayName = knownUser.displayName.trim();
+    if (displayName.length > 0) {
+      return displayName;
+    }
+
+    return knownUser.username;
+  };
+
+  const markSelectedDirectMessageUser = (): void => {
+    const rows = document.querySelectorAll<HTMLElement>(
+      "#usersDirectoryList [data-user-id], #usersSidebarDirectoryList [data-user-id]",
+    );
+    for (const row of rows) {
+      row.classList.toggle(
+        "selected",
+        directMessageTargetUserId !== null &&
+          row.dataset.userId === directMessageTargetUserId,
+      );
+    }
+  };
+
+  const renderDirectMessagePanel = (): void => {
+    const directMessageHeader =
+      dom.directMessageSection.querySelector<HTMLElement>(
+        ".direct-message-header",
+      );
+
+    if (!directMessageTargetUserId) {
+      dom.usersPageDirectorySection.classList.add("hidden");
+      dom.directMessageSection.classList.remove("hidden");
+      directMessageHeader?.classList.add("hidden");
+      dom.directMessageForm.classList.add("hidden");
+      dom.directMessageTitle.textContent = "";
+      dom.directMessageList.innerHTML =
+        '<li class="direct-message-empty-state"><div class="direct-message-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M8 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm8 2a3 3 0 1 0-2.12-.88A2.98 2.98 0 0 0 16 12Zm-8 1c-2.67 0-8 1.34-8 4v1a1 1 0 0 0 1 1h10.28a6.94 6.94 0 0 1-.28-2c0-1.43.43-2.76 1.17-3.88A12.9 12.9 0 0 0 8 13Zm10 0a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm2.71 3.29a1 1 0 0 0-1.42 0L17 18.88l-.88-.88a1 1 0 0 0-1.42 1.42l1.59 1.58a1 1 0 0 0 1.42 0l2.99-3a1 1 0 0 0 0-1.41Z"/></svg></div><p class="direct-message-empty-title">Sohbet başlatmak için bir arkadaş seç</p><p class="direct-message-empty-subtitle">Soldaki listeden bir kişiye tıkla, bu alanda sadece onunla olan mesajlar açılır.</p></li>';
+      dom.directMessageInput.disabled = true;
+      dom.directMessageSendButton.disabled = true;
+      return;
+    }
+
+    dom.usersPageDirectorySection.classList.add("hidden");
+    dom.directMessageSection.classList.remove("hidden");
+    directMessageHeader?.classList.remove("hidden");
+    dom.directMessageForm.classList.remove("hidden");
+    const peerName = resolveKnownUserName(directMessageTargetUserId);
+    dom.directMessageTitle.textContent = `${peerName} ile mesajlaşıyorsun`;
+    dom.directMessageInput.disabled = false;
+    dom.directMessageSendButton.disabled = false;
+
+    const shouldStickBottom =
+      dom.directMessageList.scrollHeight -
+        (dom.directMessageList.scrollTop +
+          dom.directMessageList.clientHeight) <=
+      48;
+
+    const messages = Array.from(directMessagesById.values()).sort(
+      (left, right) => {
+        const leftTime = new Date(left.createdAt).getTime();
+        const rightTime = new Date(right.createdAt).getTime();
+        if (
+          Number.isFinite(leftTime) &&
+          Number.isFinite(rightTime) &&
+          leftTime !== rightTime
+        ) {
+          return leftTime - rightTime;
+        }
+
+        return left.id.localeCompare(right.id);
+      },
+    );
+
+    dom.directMessageList.innerHTML = "";
+    if (messages.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "lobby-chat-empty";
+      empty.textContent = "Henüz mesaj yok. İlk mesajı sen gönder.";
+      dom.directMessageList.appendChild(empty);
+      return;
+    }
+
+    for (const message of messages) {
+      const row = document.createElement("li");
+      const isOwn = selfUserId !== null && message.userId === selfUserId;
+      row.className = isOwn
+        ? "lobby-chat-message lobby-chat-message--self"
+        : "lobby-chat-message";
+
+      const meta = document.createElement("div");
+      meta.className = "lobby-chat-meta";
+
+      const author = document.createElement("strong");
+      author.className = "lobby-chat-author";
+      author.textContent = isOwn ? "Sen" : resolveKnownUserName(message.userId);
+
+      const timestamp = document.createElement("time");
+      timestamp.className = "lobby-chat-time";
+      timestamp.dateTime = message.createdAt;
+      timestamp.textContent = formatChatClock(message.createdAt);
+
+      const body = document.createElement("p");
+      body.className = "lobby-chat-body";
+      body.textContent = message.body;
+
+      meta.appendChild(author);
+      meta.appendChild(timestamp);
+      row.appendChild(meta);
+      row.appendChild(body);
+      dom.directMessageList.appendChild(row);
+    }
+
+    if (shouldStickBottom) {
+      dom.directMessageList.scrollTop = dom.directMessageList.scrollHeight;
+    }
+  };
+
+  const resolveLobbyMemberDisplayName = (
+    member: LobbyMemberSnapshot,
+  ): string => {
+    const mappedDisplayName = displayNameByUserId.get(member.userId)?.trim();
+    if (mappedDisplayName && mappedDisplayName.length > 0) {
+      return mappedDisplayName;
+    }
+
+    const knownUser = knownUsersById.get(member.userId);
+    if (knownUser) {
+      const knownDisplayName = knownUser.displayName.trim();
+      if (knownDisplayName.length > 0) {
+        return knownDisplayName;
+      }
+    }
+
+    const username = member.username.trim();
+    if (username.length > 0) {
+      return username;
+    }
+
+    return member.userId;
+  };
+
+  const createLobbyMemberStatusIcon = (
+    type: "mic" | "headphone",
+    isOn: boolean,
+  ): HTMLSpanElement => {
+    const icon = document.createElement("span");
+    icon.className = `presence-icon ${type} ${isOn ? "on" : "off"} w-4 h-4 rounded-full border inline-flex items-center justify-center`;
+    icon.title =
+      type === "mic"
+        ? isOn
+          ? "Mikrofon açık"
+          : "Mikrofon kapalı"
+        : isOn
+          ? "Kulaklık açık"
+          : "Kulaklık kapalı";
+    icon.setAttribute("aria-label", icon.title);
+
+    icon.innerHTML =
+      type === "mic"
+        ? isOn
+          ? '<svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-6 6.93V20h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 0 0 10 0Z"/></svg>'
+          : '<svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.9 17.5A7 7 0 0 1 13 19.93V22h3a1 1 0 1 1 0 2H8a1 1 0 0 1 0-2h3v-2.07A7 7 0 0 1 5 13a1 1 0 1 1 2 0 5 5 0 0 0 8.73 3.4ZM15 8v2.17l-6-6V8a3 3 0 0 0 6 0ZM2.3 20.3a1 1 0 1 0 1.4 1.4l18-18a1 1 0 1 0-1.4-1.4l-18 18Z"/></svg>'
+        : isOn
+          ? '<svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 0 0-8 8v4a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6v-1a6 6 0 1 1 12 0v1h-2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a3 3 0 0 0 3-3v-4a8 8 0 0 0-8-8Z"/></svg>'
+          : '<svg class="w-2.5 h-2.5 fill-current" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 0 0-7.69 10.2A3 3 0 0 0 4 15v1a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-2.17l-4-4V11a6 6 0 0 1 10.73-3.67l1.43 1.43A7.95 7.95 0 0 0 12 4ZM20 16v-2a8.16 8.16 0 0 0-.4-2.52L22 13.88V16a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-.88l2 2A3 3 0 0 0 20 16Zm-16.7 4.3a1 1 0 0 0 1.4 1.4l16-16a1 1 0 1 0-1.4-1.4l-16 16Z"/></svg>';
+
+    return icon;
+  };
+
+  const setLobbyMembersSnapshot = (
+    lobbyId: string,
+    members: LobbyMemberSnapshot[],
+  ): void => {
+    const normalizedLobbyID = lobbyId.trim();
+    if (!normalizedLobbyID) {
+      return;
+    }
+
+    const normalizedMembers = [...members].sort((left, right) => {
+      return resolveLobbyMemberDisplayName(left).localeCompare(
+        resolveLobbyMemberDisplayName(right),
+        "tr",
+      );
+    });
+    lobbyMembersByLobbyId.set(normalizedLobbyID, normalizedMembers);
+  };
+
+  const pruneLobbyMemberSnapshots = (): void => {
+    const existingLobbyIds = new Set(availableLobbies.map((lobby) => lobby.id));
+    for (const lobbyId of Array.from(lobbyMembersByLobbyId.keys())) {
+      if (!existingLobbyIds.has(lobbyId)) {
+        lobbyMembersByLobbyId.delete(lobbyId);
+      }
+    }
+  };
+
+  const loadLobbyMemberSnapshots = async (silent = true): Promise<void> => {
+    pruneLobbyMemberSnapshots();
+    await Promise.all(
+      availableLobbies.map(async (lobby) => {
+        const response = await window.desktopApi.getLobbyStateById({
+          lobbyId: lobby.id,
+        });
+        if (!response.ok || !response.data) {
+          if (!silent && response.error?.statusCode !== 404) {
+            setStatus(
+              `Lobi kullanıcıları alınamadı: ${getErrorMessage(response.error)}`,
+              true,
+            );
+          }
+          if (response.error?.statusCode === 404) {
+            lobbyMembersByLobbyId.delete(lobby.id);
+          }
+          return;
+        }
+
+        setLobbyMembersSnapshot(lobby.id, response.data.members);
+      }),
+    );
+  };
+
+  const syncActiveLobbyPresentation = (): void => {
+    const activeLobby = availableLobbies.find(
+      (lobby) => lobby.id === activeLobbyId,
+    );
+    activeLobbyName = activeLobby?.name ?? activeLobbyId;
+    dom.lobbyChatInput.placeholder = `${activeLobbyName} lobisine mesaj yaz`;
+
+    const lobbyChatTitle =
+      dom.lobbyChatPanel.querySelector<HTMLElement>(".lobby-chat-title");
+    if (lobbyChatTitle) {
+      lobbyChatTitle.textContent = `${activeLobbyName} Sohbeti`;
+    }
+
+    dom.lobbiesList.innerHTML = "";
+    if (availableLobbies.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "lobby-chat-empty";
+      empty.textContent = "Henüz lobi yok.";
+      dom.lobbiesList.appendChild(empty);
+      return;
+    }
+
+    for (const lobby of availableLobbies) {
+      const isDefaultLobby = lobby.id === runtimeConfig.liveKitDefaultRoom;
+      const item = document.createElement("li");
+      item.className = "lobby-room-card";
+
+      const header = document.createElement("div");
+      header.className = "lobby-room-header";
+
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = "lobby-room-select";
+      selectButton.dataset.lobbyId = lobby.id;
+
+      const title = document.createElement("span");
+      title.className = "lobby-room-name";
+      title.textContent = lobby.name;
+
+      const memberCount = document.createElement("span");
+      memberCount.className = "lobby-room-count";
+      memberCount.textContent = `${lobby.memberCount}`;
+
+      selectButton.appendChild(title);
+      selectButton.appendChild(memberCount);
+      header.appendChild(selectButton);
+
+      if (!isDefaultLobby) {
+        item.dataset.lobbyContextEnabled = "true";
+      }
+
+      item.appendChild(header);
+
+      const membersList = document.createElement("ul");
+      membersList.className = "lobby-room-members";
+      const members = lobbyMembersByLobbyId.get(lobby.id) ?? [];
+
+      if (members.length === 0) {
+        const emptyMember = document.createElement("li");
+        emptyMember.className = "lobby-room-member is-empty";
+        emptyMember.textContent =
+          lobby.memberCount > 0
+            ? `${lobby.memberCount} kullanıcı bu lobide.`
+            : "Kimse bu lobide değil.";
+        membersList.appendChild(emptyMember);
+      } else {
+        for (const member of members) {
+          const memberRow = document.createElement("li");
+          memberRow.className = "lobby-room-member";
+          memberRow.dataset.userId = member.userId;
+          const memberName = resolveLobbyMemberDisplayName(member);
+          const nameLabel = document.createElement("span");
+          nameLabel.className = "lobby-room-member-name";
+
+          if (selfUserId !== null && member.userId === selfUserId) {
+            nameLabel.textContent = `${memberName} (Sen)`;
+            memberRow.classList.add("is-self");
+          } else {
+            nameLabel.textContent = memberName;
+          }
+
+          const status = document.createElement("span");
+          status.className = "lobby-room-member-status";
+          status.appendChild(createLobbyMemberStatusIcon("mic", !member.muted));
+          status.appendChild(
+            createLobbyMemberStatusIcon("headphone", !member.deafened),
+          );
+
+          memberRow.appendChild(nameLabel);
+          memberRow.appendChild(status);
+          membersList.appendChild(memberRow);
+        }
+      }
+
+      item.appendChild(membersList);
+      dom.lobbiesList.appendChild(item);
+    }
+  };
 
   const resolveQuickControlSourceButton = (
     quickControl: string,
@@ -319,17 +768,25 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     cameraResolution =
-      localStorage.getItem(CAMERA_RESOLUTION_STORAGE_KEY) ?? "1280x720";
-    cameraFps = localStorage.getItem(CAMERA_FPS_STORAGE_KEY) ?? "30";
+      localStorage.getItem(CAMERA_RESOLUTION_STORAGE_KEY) ??
+      mediaQualityDefaults.cameraResolution;
+    cameraFps =
+      localStorage.getItem(CAMERA_FPS_STORAGE_KEY) ??
+      mediaQualityDefaults.cameraFps;
     inputGainPercent = clampInputGainPercent(
       Number(localStorage.getItem(INPUT_GAIN_STORAGE_KEY) ?? "100"),
     );
     screenResolution =
-      localStorage.getItem(SCREEN_RESOLUTION_STORAGE_KEY) ?? "1920x1080";
-    screenFps = localStorage.getItem(SCREEN_FPS_STORAGE_KEY) ?? "30";
+      localStorage.getItem(SCREEN_RESOLUTION_STORAGE_KEY) ??
+      mediaQualityDefaults.screenResolution;
+    screenFps =
+      localStorage.getItem(SCREEN_FPS_STORAGE_KEY) ??
+      mediaQualityDefaults.screenFps;
     screenShareMode = normalizeScreenCaptureKind(
       localStorage.getItem(SCREEN_MODE_STORAGE_KEY),
     );
+    lobbyChatCollapsed =
+      localStorage.getItem(LOBBY_CHAT_COLLAPSED_STORAGE_KEY) === "1";
 
     const rawParticipantAudioSettings = localStorage.getItem(
       PARTICIPANT_AUDIO_SETTINGS_STORAGE_KEY,
@@ -390,17 +847,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     speakingDetectionMode = "auto";
     manualSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
     effectiveSpeakingThresholdPercent = DEFAULT_SPEAKING_THRESHOLD_PERCENT;
-    cameraResolution = "1280x720";
-    cameraFps = "30";
+    cameraResolution = mediaQualityDefaults.cameraResolution;
+    cameraFps = mediaQualityDefaults.cameraFps;
     inputGainPercent = 100;
-    screenResolution = "1920x1080";
-    screenFps = "30";
+    screenResolution = mediaQualityDefaults.screenResolution;
+    screenFps = mediaQualityDefaults.screenFps;
     screenShareMode = "any";
+    lobbyChatCollapsed = false;
     mediaDebugLogEntries = [];
     participantAudioSettings = new Map<string, ParticipantAudioSetting>();
   }
 
   uiSoundController.setEnabled(uiSoundsEnabled);
+  applyLobbyChatPanelState();
 
   let toastSequence = 0;
   let lastToastMessage = "";
@@ -592,6 +1051,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     setStatus,
     onPageChanged: (page) => {
       if (page === "users") {
+        if (!hasOpenedUsersPageOnce) {
+          hasOpenedUsersPageOnce = true;
+          directMessageTargetUserId = null;
+          directMessagesById.clear();
+          stopDirectMessageRefresh();
+          renderDirectMessagePanel();
+          markSelectedDirectMessageUser();
+        }
+
         void refreshLobby(true);
         void directoryController.refreshRegisteredUsers(true);
       }
@@ -615,6 +1083,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
     lobbyController.setDisplayNameMap(displayNameByUserId);
     lobbyChatController.setDisplayNameMap(displayNameByUserId);
+    syncActiveLobbyPresentation();
   };
 
   const applyLocalDisplayName = (userId: string, displayName: string): void => {
@@ -634,19 +1103,35 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     desktopApi,
     lobbyController,
     getSelfUserId: () => selfUserId,
+    getSelectedUserId: () => directMessageTargetUserId,
     setStatus,
     getErrorMessage,
     onUsersRefreshed: (users) => {
+      knownUsersById.clear();
+      for (const user of users) {
+        knownUsersById.set(user.userId, user);
+      }
       syncDisplayNameMapFromUsers(users);
+      void loadLobbyMemberSnapshots(true).then(() => {
+        syncActiveLobbyPresentation();
+      });
+      renderDirectMessagePanel();
+      markSelectedDirectMessageUser();
       void voiceController.onLobbyUpdated();
     },
   });
+
+  const renderUserDirectoryWithDmSelection = (): void => {
+    directoryController.renderUserDirectory();
+    markSelectedDirectMessageUser();
+  };
 
   const diagnosticsController = createDiagnosticsController({
     dom,
     setStatus,
     getMetrics: () => ({
       voiceConnected,
+      voiceConnectionInProgress,
       realtimeConnectionStatus,
       realtimeLatencyMs,
       realtimePacketLossPercent,
@@ -665,8 +1150,25 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const setVoiceState = (message: string, isError: boolean): void => {
+    if (
+      voiceConnectionInProgress &&
+      !isError &&
+      message !== "Sohbete bağlanılıyor..."
+    ) {
+      return;
+    }
+
     dom.voiceState.textContent = message;
     dom.voiceState.style.color = isError ? "#ffaaaa" : "#93a8be";
+  };
+
+  const setVoiceConnectionInProgress = (inProgress: boolean): void => {
+    voiceConnectionInProgress = inProgress;
+    if (inProgress) {
+      setVoiceState("Sohbete bağlanılıyor...", false);
+    }
+
+    diagnosticsController.updateConnectionDiagnostics();
   };
 
   const persistMediaDebugLogs = (): void => {
@@ -690,7 +1192,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     try {
       return JSON.stringify(details);
     } catch {
-      return "[detay serilestirilemedi]";
+      return "[detay serileştirilemedi]";
     }
   };
 
@@ -1091,6 +1593,12 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     directoryController.stopFriendsPresenceAutoRefresh();
   });
   lifecycle.add(() => {
+    stopLobbyMemberSnapshotRefresh();
+  });
+  lifecycle.add(() => {
+    stopDirectMessageRefresh();
+  });
+  lifecycle.add(() => {
     stopAllShareTests();
   });
   lifecycle.add(() => {
@@ -1101,6 +1609,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.quickMicToggle.classList.toggle("active", !isMuted);
     dom.quickMicToggle.dataset.stateText = isMuted ? "OFF" : "ON";
     dom.quickMicToggle.title = isMuted ? "Mikrofon Kapalı" : "Mikrofon Açık";
+  };
+
+  const syncLobbyEntryDependentControls = (): void => {
+    const isInLobby = voiceConnected;
+    dom.quickConnectionToggle.classList.toggle("hidden", !isInLobby);
+    dom.quickCameraToggle.classList.toggle("hidden", !isInLobby);
+    dom.quickScreenToggle.classList.toggle("hidden", !isInLobby);
+    dom.lobbyStageShell.classList.toggle("is-empty-lobby-state", !isInLobby);
+    dom.participantGrid.classList.toggle("hidden", !isInLobby);
+    dom.lobbyJoinEmptyState.classList.toggle("hidden", isInLobby);
+    dom.lobbyChatReopenButton.classList.toggle("hidden", !isInLobby);
+
+    if (participantHoverControls instanceof HTMLElement) {
+      participantHoverControls.classList.toggle("hidden", !isInLobby);
+    }
   };
 
   const updateQuickHeadphoneButton = (): void => {
@@ -1123,6 +1646,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.quickConnectionLabel.textContent = voiceConnected
       ? "Sohbetten Çık"
       : "Sohbete Bağlan";
+
+    syncLobbyEntryDependentControls();
+    syncActiveLobbyPresentation();
+
     diagnosticsController.updateConnectionDiagnostics();
   };
 
@@ -1165,7 +1692,38 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       ...current,
       ...patch,
     });
-    directoryController.renderUserDirectory();
+    renderUserDirectoryWithDmSelection();
+  };
+
+  const resolveRealtimeLobbyId = (lobbyId?: string): string => {
+    const normalizedLobbyID = lobbyId?.trim() ?? "";
+    if (normalizedLobbyID.length > 0) {
+      return normalizedLobbyID;
+    }
+
+    return activeLobbyId;
+  };
+
+  const syncLobbyMemberCountFromSnapshot = (
+    lobbyId: string,
+    memberCount: number,
+  ): void => {
+    const lobbyIndex = availableLobbies.findIndex(
+      (lobby) => lobby.id === lobbyId,
+    );
+    if (lobbyIndex < 0) {
+      return;
+    }
+
+    const currentLobby = availableLobbies[lobbyIndex];
+    if (!currentLobby || currentLobby.memberCount === memberCount) {
+      return;
+    }
+
+    availableLobbies[lobbyIndex] = {
+      ...currentLobby,
+      memberCount,
+    };
   };
 
   const applySelfLobbyRealtimeOverrides = (
@@ -1205,23 +1763,30 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       workspaceController.setSettingsTab("profile");
       closeParticipantAudioMenu();
       directoryController.stopFriendsPresenceAutoRefresh();
+      hasOpenedUsersPageOnce = false;
+      stopLobbyMemberSnapshotRefresh();
+      stopDirectMessageRefresh();
       selfUserId = null;
+      knownUsersById.clear();
       displayNameByUserId.clear();
       lobbyController.setDisplayNameMap(displayNameByUserId);
+      availableLobbies = [];
+      lobbyMembersByLobbyId.clear();
+      activeLobbyId = runtimeConfig.liveKitDefaultRoom;
+      activeLobbyName = "Ana Lobi";
+      syncActiveLobbyPresentation();
+      directMessageTargetUserId = null;
+      directMessagesById.clear();
+      renderDirectMessagePanel();
       directoryController.clearUsers();
-      directoryController.renderUserDirectory();
+      renderUserDirectoryWithDmSelection();
       lobbyController.clearLobby();
       latestLobbyRevision = 0;
       resetRemoteMediaAnnouncementState();
-      voiceController.cleanupForLobbyExit();
+      cancelPendingShareModalFlow();
+      void voiceController.shutdownMedia();
       stopAllShareTests();
-      voiceConnected = false;
-      cameraSharing = false;
-      screenSharing = false;
-      voiceJoinLatencyMs = null;
-      updateQuickConnectionButton();
-      updateCameraShareButton();
-      updateScreenShareButton();
+      applyLocalMediaOffState();
       dom.profileForm.reset();
       dom.passwordForm.reset();
       dom.currentUser.textContent = "-";
@@ -1257,7 +1822,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       updateScreenShareButton();
     },
     getIsMuted: () => isMuted,
-    getLiveKitDefaultRoom: () => runtimeConfig.liveKitDefaultRoom,
+    getLiveKitDefaultRoom: () => activeLobbyId,
     getSelfUserId: () => authController.getSelfUserId(),
     getLobbyMembers: () => lobbyController.getMembersMap(),
     resolveMemberName: (userId: string) =>
@@ -1305,6 +1870,24 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     createCameraPreviewStream: (options) =>
       voiceController.createCameraTestStream(options),
   });
+
+  const cancelPendingShareModalFlow = (): void => {
+    shareModalController.completeScreenModalSelection(false);
+    shareModalController.closeScreenModal();
+  };
+
+  const applyLocalMediaOffState = (): void => {
+    isMuted = true;
+    isSpeaking = false;
+    voiceConnected = false;
+    voiceJoinLatencyMs = null;
+    cameraSharing = false;
+    screenSharing = false;
+    updateMuteButton();
+    updateQuickConnectionButton();
+    updateCameraShareButton();
+    updateScreenShareButton();
+  };
 
   const setSelectValueSafely = (
     select: HTMLSelectElement,
@@ -1372,6 +1955,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
+    if (!voiceConnected) {
+      setStatus(
+        "Sohbet bağlantısı kapandığı için kamera paylaşımı başlatılmadı",
+        true,
+      );
+      return;
+    }
+
     try {
       const enabled = await voiceController.toggleCameraShare(
         getCameraShareOptions(),
@@ -1417,6 +2008,14 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       await shareModalController.requestScreenCaptureSourceSelection();
     if (!selectedSource) {
       setStatus("Ekran paylaşımı seçimi iptal edildi", false);
+      return;
+    }
+
+    if (!voiceConnected) {
+      setStatus(
+        "Sohbet bağlantısı kapandığı için ekran paylaşımı başlatılmadı",
+        true,
+      );
       return;
     }
 
@@ -1517,6 +2116,242 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   };
 
+  const loadLobbiesFromBackend = async (silent = true): Promise<boolean> => {
+    const lobbiesResult = await window.desktopApi.listLobbies();
+    if (!lobbiesResult.ok || !lobbiesResult.data) {
+      if (!silent) {
+        setStatus(
+          `Lobi listesi alınamadı: ${getErrorMessage(lobbiesResult.error)}`,
+          true,
+        );
+      }
+      return false;
+    }
+
+    availableLobbies = lobbiesResult.data.lobbies;
+    if (availableLobbies.length === 0) {
+      lobbyMembersByLobbyId.clear();
+      syncActiveLobbyPresentation();
+      return true;
+    }
+
+    if (availableLobbies.length > 0) {
+      const current = availableLobbies.find(
+        (lobby) => lobby.id === activeLobbyId,
+      );
+      if (!current) {
+        const [firstLobby] = availableLobbies;
+        if (!firstLobby) {
+          return false;
+        }
+        activeLobbyId = firstLobby.id;
+        await window.desktopApi.selectLobby({ lobbyId: activeLobbyId });
+      }
+    }
+
+    await loadLobbyMemberSnapshots(true);
+    syncActiveLobbyPresentation();
+    return true;
+  };
+
+  const selectLobbyById = async (
+    nextLobbyId: string,
+    options?: {
+      silent?: boolean;
+      reconnectVoice?: boolean;
+      connectVoice?: boolean;
+    },
+  ): Promise<boolean> => {
+    const normalizedLobbyID = nextLobbyId.trim();
+    if (normalizedLobbyID.length === 0) {
+      return false;
+    }
+
+    const previousLobbyID = activeLobbyId;
+    const shouldReconnectVoice =
+      options?.reconnectVoice === true && voiceConnected;
+    const isSwitchingLobby = previousLobbyID !== normalizedLobbyID;
+
+    if (shouldReconnectVoice && isSwitchingLobby) {
+      const disconnected = await disconnectFromChat();
+      if (!disconnected) {
+        return false;
+      }
+    }
+
+    const selected = await window.desktopApi.selectLobby({
+      lobbyId: normalizedLobbyID,
+    });
+    if (!selected.ok || !selected.data) {
+      if (shouldReconnectVoice && isSwitchingLobby && !voiceConnected) {
+        await connectToChat();
+      }
+      if (options?.silent !== true) {
+        setStatus(`Lobi seçilemedi: ${getErrorMessage(selected.error)}`, true);
+      }
+      return false;
+    }
+
+    activeLobbyId = selected.data.lobbyId;
+    latestLobbyRevision = 0;
+    resetRemoteMediaAnnouncementState();
+    lobbyController.clearLobby();
+    lobbyChatController.clear();
+    await loadLobbiesFromBackend(true);
+    syncActiveLobbyPresentation();
+
+    if (shouldReconnectVoice && isSwitchingLobby) {
+      const connected = await connectToChat();
+      if (!connected) {
+        return false;
+      }
+    } else if (options?.connectVoice === true && !voiceConnected) {
+      const connected = await connectToChat();
+      if (!connected) {
+        return false;
+      }
+    } else {
+      await refreshLobby(true);
+    }
+
+    await loadLobbyChatHistory(true);
+
+    if (options?.silent !== true) {
+      setStatus(`Aktif lobi: ${activeLobbyName}`, false);
+    }
+
+    return true;
+  };
+
+  const stopDirectMessageRefresh = (): void => {
+    if (directMessageRefreshTimer !== null) {
+      window.clearInterval(directMessageRefreshTimer);
+      directMessageRefreshTimer = null;
+    }
+  };
+
+  const stopLobbyMemberSnapshotRefresh = (): void => {
+    if (lobbyMemberSnapshotRefreshTimer !== null) {
+      window.clearInterval(lobbyMemberSnapshotRefreshTimer);
+      lobbyMemberSnapshotRefreshTimer = null;
+    }
+  };
+
+  const refreshLobbiesAndMemberSnapshots = async (): Promise<void> => {
+    if (lobbyMemberSnapshotRefreshInFlight) {
+      return;
+    }
+
+    lobbyMemberSnapshotRefreshInFlight = true;
+    try {
+      const loaded = await loadLobbiesFromBackend(true);
+      if (!loaded) {
+        return;
+      }
+
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
+    } finally {
+      lobbyMemberSnapshotRefreshInFlight = false;
+    }
+  };
+
+  const startLobbyMemberSnapshotRefresh = (): void => {
+    stopLobbyMemberSnapshotRefresh();
+    void refreshLobbiesAndMemberSnapshots();
+    lobbyMemberSnapshotRefreshTimer = window.setInterval(() => {
+      void refreshLobbiesAndMemberSnapshots();
+    }, LOBBY_MEMBERS_REFRESH_INTERVAL_MS);
+  };
+
+  const loadDirectMessages = async (silent = true): Promise<void> => {
+    if (!directMessageTargetUserId) {
+      directMessagesById.clear();
+      renderDirectMessagePanel();
+      return;
+    }
+
+    const result = await window.desktopApi.chatListDirectMessages({
+      peerUserId: directMessageTargetUserId,
+      limit: 100,
+    });
+
+    if (!result.ok || !result.data) {
+      if (!silent) {
+        setStatus(
+          `Direkt mesaj geçmişi alınamadı: ${getErrorMessage(result.error)}`,
+          true,
+        );
+      }
+      return;
+    }
+
+    directMessagesById.clear();
+    for (const message of result.data.messages) {
+      directMessagesById.set(message.id, message);
+    }
+    renderDirectMessagePanel();
+  };
+
+  const startDirectMessageRefresh = (): void => {
+    stopDirectMessageRefresh();
+    if (!directMessageTargetUserId) {
+      return;
+    }
+
+    directMessageRefreshTimer = window.setInterval(() => {
+      void loadDirectMessages(true);
+    }, 3000);
+  };
+
+  const selectDirectMessagePeer = async (userId: string): Promise<void> => {
+    const normalizedUserID = userId.trim();
+    if (!normalizedUserID || normalizedUserID === selfUserId) {
+      return;
+    }
+
+    if (directMessageTargetUserId === normalizedUserID) {
+      // Ignore duplicate click for the selected peer to avoid flicker/toggle.
+      return;
+    }
+
+    directMessageTargetUserId = normalizedUserID;
+    directMessagesById.clear();
+    renderDirectMessagePanel();
+    markSelectedDirectMessageUser();
+    await loadDirectMessages(true);
+    startDirectMessageRefresh();
+  };
+
+  const sendDirectMessage = async (body: string): Promise<void> => {
+    const normalizedBody = body.trim();
+    if (!directMessageTargetUserId || normalizedBody.length === 0) {
+      return;
+    }
+
+    dom.directMessageSendButton.disabled = true;
+    try {
+      const result = await window.desktopApi.chatSendDirectMessage({
+        peerUserId: directMessageTargetUserId,
+        body: normalizedBody,
+      });
+
+      if (!result.ok || !result.data) {
+        setStatus(
+          `Direkt mesaj gönderilemedi: ${getErrorMessage(result.error)}`,
+          true,
+        );
+        return;
+      }
+
+      dom.directMessageInput.value = "";
+      directMessagesById.set(result.data.message.id, result.data.message);
+      renderDirectMessagePanel();
+    } finally {
+      dom.directMessageSendButton.disabled = false;
+    }
+  };
+
   const connectRealtimeAndJoin = async (): Promise<boolean> => {
     const connectResult = await window.desktopApi.realtimeConnect();
     if (!connectResult.ok) {
@@ -1605,10 +2440,17 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const connectToChat = async (): Promise<boolean> => {
+    if (voiceConnectionInProgress) {
+      return false;
+    }
+
     const joinStartedAt = performance.now();
+    setVoiceConnectionInProgress(true);
 
     const realtimeReady = await connectRealtimeAndJoin();
     if (!realtimeReady) {
+      setVoiceConnectionInProgress(false);
+      setVoiceState("Ses beklemede", false);
       voiceJoinLatencyMs = null;
       return false;
     }
@@ -1620,6 +2462,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       const message =
         error instanceof Error ? error.message : "bilinmeyen hata";
       setStatus(`Ses başlatılamadı: ${message}`, true);
+      setVoiceConnectionInProgress(false);
       setVoiceState("Ses başlatılamadı", true);
       voiceJoinLatencyMs = null;
       return false;
@@ -1650,17 +2493,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
     voiceConnected = true;
     voiceJoinLatencyMs = Math.round(performance.now() - joinStartedAt);
+    setVoiceConnectionInProgress(false);
+    setVoiceState("LiveKit bağlantısı hazır", false);
     updateQuickConnectionButton();
     updateCameraShareButton();
     updateScreenShareButton();
     uiSoundController.play("connect");
-    setStatus("Sohbete bağlanıldı", false);
+    setStatus(`${activeLobbyName} lobisine bağlanıldı`, false);
     return true;
   };
 
   const disconnectFromChat = async (): Promise<boolean> => {
-    await voiceController.stopVoice();
-    isSpeaking = false;
+    cancelPendingShareModalFlow();
+    stopAllShareTests();
+    await voiceController.shutdownMedia();
+    applyLocalMediaOffState();
 
     const muteResult = await window.desktopApi.lobbyMute(true);
     if (!muteResult.ok && muteResult.error?.statusCode !== 404) {
@@ -1679,20 +2526,37 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return false;
     }
 
-    voiceController.cleanupForLobbyExit();
+    const currentSelfUserId = selfUserId ?? authController.getSelfUserId();
+    if (currentSelfUserId) {
+      const activeMembers = lobbyMembersByLobbyId.get(activeLobbyId) ?? [];
+      const nextMembers = activeMembers.filter(
+        (existingMember) => existingMember.userId !== currentSelfUserId,
+      );
+      setLobbyMembersSnapshot(activeLobbyId, nextMembers);
+
+      const lobbyIndex = availableLobbies.findIndex(
+        (lobby) => lobby.id === activeLobbyId,
+      );
+      if (lobbyIndex >= 0) {
+        const currentLobby = availableLobbies[lobbyIndex];
+        if (currentLobby) {
+          const nextLobby: LobbyDescriptor = {
+            ...currentLobby,
+            memberCount: Math.max(0, currentLobby.memberCount - 1),
+          };
+          availableLobbies[lobbyIndex] = nextLobby;
+        }
+      }
+
+      lobbyController.removeMember(currentSelfUserId);
+      remoteMediaStateByUserId.delete(currentSelfUserId);
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
+    }
+
     resetRemoteMediaAnnouncementState();
-    stopAllShareTests();
-    isMuted = true;
-    updateMuteButton();
-    voiceConnected = false;
-    voiceJoinLatencyMs = null;
-    cameraSharing = false;
-    screenSharing = false;
-    updateQuickConnectionButton();
-    updateCameraShareButton();
-    updateScreenShareButton();
     uiSoundController.play("disconnect");
-    setStatus("Sohbetten çıkıldı", false);
+    setStatus(`${activeLobbyName} lobisinden çıkıldı`, false);
     return true;
   };
 
@@ -1789,50 +2653,92 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     latencySamplesMs,
     resetRemoteMediaAnnouncementState,
     handleDisconnectedState: () => {
-      voiceController.cleanupForLobbyExit();
+      cancelPendingShareModalFlow();
+      void voiceController.shutdownMedia();
       resetRemoteMediaAnnouncementState();
       stopAllShareTests();
-      voiceConnected = false;
-      cameraSharing = false;
-      screenSharing = false;
-      updateQuickConnectionButton();
-      updateCameraShareButton();
-      updateScreenShareButton();
+      applyLocalMediaOffState();
     },
     updateDiagnostics: () => {
       diagnosticsController.updateConnectionDiagnostics();
     },
-    onLobbyStateApplied: (members) => {
-      lobbyController.renderLobby({
-        members,
-        size: members.length,
-      });
-      directoryController.renderUserDirectory();
-      void voiceController.onLobbyUpdated();
+    onLobbyStateApplied: (members, lobbyId) => {
+      const targetLobbyID = resolveRealtimeLobbyId(lobbyId);
+      setLobbyMembersSnapshot(targetLobbyID, members);
+      syncLobbyMemberCountFromSnapshot(targetLobbyID, members.length);
+
+      if (targetLobbyID === activeLobbyId) {
+        lobbyController.renderLobby({
+          members,
+          size: members.length,
+        });
+        void voiceController.onLobbyUpdated();
+      }
+
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
     },
-    onMemberJoinedApplied: (member) => {
-      remoteMediaStateByUserId.set(member.userId, {
-        cameraEnabled: member.cameraEnabled === true,
-        screenSharing: member.screenSharing === true,
-      });
-      lobbyController.addOrUpdateMember(member);
-      directoryController.renderUserDirectory();
-      void voiceController.onLobbyUpdated();
+    onMemberJoinedApplied: (member, lobbyId) => {
+      const targetLobbyID = resolveRealtimeLobbyId(lobbyId);
+      const existingMembers = lobbyMembersByLobbyId.get(targetLobbyID) ?? [];
+      const nextMembers = existingMembers.filter(
+        (existingMember) => existingMember.userId !== member.userId,
+      );
+      nextMembers.push(member);
+      setLobbyMembersSnapshot(targetLobbyID, nextMembers);
+      syncLobbyMemberCountFromSnapshot(targetLobbyID, nextMembers.length);
+
+      if (targetLobbyID === activeLobbyId) {
+        remoteMediaStateByUserId.set(member.userId, {
+          cameraEnabled: member.cameraEnabled === true,
+          screenSharing: member.screenSharing === true,
+        });
+        lobbyController.addOrUpdateMember(member);
+        void voiceController.onLobbyUpdated();
+      }
+
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
     },
-    onMemberUpdatedApplied: (member) => {
-      remoteMediaStateByUserId.set(member.userId, {
-        cameraEnabled: member.cameraEnabled === true,
-        screenSharing: member.screenSharing === true,
-      });
-      lobbyController.addOrUpdateMember(member);
-      directoryController.renderUserDirectory();
-      void voiceController.onLobbyUpdated();
+    onMemberUpdatedApplied: (member, lobbyId) => {
+      const targetLobbyID = resolveRealtimeLobbyId(lobbyId);
+      const existingMembers = lobbyMembersByLobbyId.get(targetLobbyID) ?? [];
+      const nextMembers = existingMembers.filter(
+        (existingMember) => existingMember.userId !== member.userId,
+      );
+      nextMembers.push(member);
+      setLobbyMembersSnapshot(targetLobbyID, nextMembers);
+      syncLobbyMemberCountFromSnapshot(targetLobbyID, nextMembers.length);
+
+      if (targetLobbyID === activeLobbyId) {
+        remoteMediaStateByUserId.set(member.userId, {
+          cameraEnabled: member.cameraEnabled === true,
+          screenSharing: member.screenSharing === true,
+        });
+        lobbyController.addOrUpdateMember(member);
+        void voiceController.onLobbyUpdated();
+      }
+
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
     },
-    onMemberLeftApplied: (userId) => {
-      remoteMediaStateByUserId.delete(userId);
-      lobbyController.removeMember(userId);
-      directoryController.renderUserDirectory();
-      voiceController.onMemberLeft(userId);
+    onMemberLeftApplied: (userId, lobbyId) => {
+      const targetLobbyID = resolveRealtimeLobbyId(lobbyId);
+      const existingMembers = lobbyMembersByLobbyId.get(targetLobbyID) ?? [];
+      const nextMembers = existingMembers.filter(
+        (existingMember) => existingMember.userId !== userId,
+      );
+      setLobbyMembersSnapshot(targetLobbyID, nextMembers);
+      syncLobbyMemberCountFromSnapshot(targetLobbyID, nextMembers.length);
+
+      if (targetLobbyID === activeLobbyId) {
+        remoteMediaStateByUserId.delete(userId);
+        lobbyController.removeMember(userId);
+        voiceController.onMemberLeft(userId);
+      }
+
+      syncActiveLobbyPresentation();
+      renderUserDirectoryWithDmSelection();
     },
     onLobbyChatHistoryApplied: (messages: LobbyChatMessage[]) => {
       lobbyChatController.replaceMessages(messages);
@@ -1888,8 +2794,185 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     closeParticipantAudioMenu,
     resolveContextMenuUserId,
     openParticipantAudioMenu,
+    onSendDirectMessageToUser: (userId) => {
+      workspaceController.setWorkspacePage("users");
+      void selectDirectMessagePeer(userId);
+    },
     toggleParticipantMute,
     updateParticipantAudioVolume: handleParticipantAudioVolumeUpdate,
+  });
+
+  const closeLobbyContextMenu = (): void => {
+    lobbyContextMenuLobbyId = null;
+    dom.lobbyContextMenu.classList.add("hidden");
+    dom.lobbyContextMenu.setAttribute("aria-hidden", "true");
+  };
+
+  const openLobbyContextMenu = (
+    lobbyId: string,
+    clientX: number,
+    clientY: number,
+  ): void => {
+    const selectedLobby = availableLobbies.find(
+      (lobby) => lobby.id === lobbyId,
+    );
+    if (
+      !selectedLobby ||
+      selectedLobby.id === runtimeConfig.liveKitDefaultRoom
+    ) {
+      closeLobbyContextMenu();
+      return;
+    }
+
+    lobbyContextMenuLobbyId = selectedLobby.id;
+    dom.lobbyContextMenuTitle.textContent = `${selectedLobby.name} işlemleri`;
+    dom.lobbyContextMenu.classList.remove("hidden");
+    dom.lobbyContextMenu.setAttribute("aria-hidden", "false");
+
+    const menuWidth = dom.lobbyContextMenu.offsetWidth || 260;
+    const menuHeight = dom.lobbyContextMenu.offsetHeight || 140;
+    const nextLeft = Math.min(
+      Math.max(8, clientX),
+      window.innerWidth - menuWidth - 8,
+    );
+    const nextTop = Math.min(
+      Math.max(8, clientY),
+      window.innerHeight - menuHeight - 8,
+    );
+
+    dom.lobbyContextMenu.style.left = `${nextLeft}px`;
+    dom.lobbyContextMenu.style.top = `${nextTop}px`;
+  };
+
+  lifecycle.on(document, "click", (event) => {
+    if (lobbyContextMenuLobbyId === null) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node) || !dom.lobbyContextMenu.contains(target)) {
+      closeLobbyContextMenu();
+    }
+  });
+
+  lifecycle.on(document, "contextmenu", (event) => {
+    if (lobbyContextMenuLobbyId === null) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Node && dom.lobbyContextMenu.contains(target)) {
+      return;
+    }
+
+    if (
+      target instanceof HTMLElement &&
+      target.closest("#lobbiesList [data-lobby-id]")
+    ) {
+      return;
+    }
+
+    closeLobbyContextMenu();
+  });
+
+  const renameLobbyById = async (lobbyId: string): Promise<void> => {
+    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
+    const nextName = window
+      .prompt("Lobi adını güncelle", current?.name ?? "")
+      ?.trim();
+    if (!nextName) {
+      return;
+    }
+
+    const response = await window.desktopApi.updateLobby({
+      lobbyId,
+      name: nextName,
+    });
+    if (!response.ok || !response.data) {
+      setStatus(`Lobi düzenlenemedi: ${getErrorMessage(response.error)}`, true);
+      return;
+    }
+
+    await loadLobbiesFromBackend(true);
+    syncActiveLobbyPresentation();
+    setStatus("Lobi adı güncellendi", false);
+  };
+
+  const deleteLobbyById = async (lobbyId: string): Promise<void> => {
+    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
+    const confirmed = window.confirm(
+      `\"${current?.name ?? lobbyId}\" lobisini silmek istediğine emin misin?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const wasActiveLobby = lobbyId === activeLobbyId;
+    const response = await window.desktopApi.deleteLobby({ lobbyId });
+    if (!response.ok || !response.data || response.data.deleted !== true) {
+      setStatus(`Lobi silinemedi: ${getErrorMessage(response.error)}`, true);
+      return;
+    }
+
+    await loadLobbiesFromBackend(true);
+    if (wasActiveLobby) {
+      await selectLobbyById(runtimeConfig.liveKitDefaultRoom, {
+        reconnectVoice: voiceConnected,
+        connectVoice: voiceConnected,
+        silent: true,
+      });
+    } else {
+      syncActiveLobbyPresentation();
+    }
+
+    setStatus("Lobi silindi", false);
+  };
+
+  lifecycle.on(dom.lobbiesList, "contextmenu", (event) => {
+    const mouseEvent = event as MouseEvent;
+    const target = mouseEvent.target;
+    if (!(target instanceof HTMLElement)) {
+      closeLobbyContextMenu();
+      return;
+    }
+
+    if (target.closest("[data-user-id]")) {
+      closeLobbyContextMenu();
+      return;
+    }
+
+    const trigger = target.closest<HTMLElement>("[data-lobby-id]");
+    const lobbyId = trigger?.dataset.lobbyId?.trim();
+    if (trigger) {
+      mouseEvent.preventDefault();
+    }
+
+    if (!lobbyId || lobbyId === runtimeConfig.liveKitDefaultRoom) {
+      closeLobbyContextMenu();
+      return;
+    }
+
+    openLobbyContextMenu(lobbyId, mouseEvent.clientX, mouseEvent.clientY);
+  });
+
+  lifecycle.on(dom.lobbyContextRename, "click", () => {
+    const lobbyId = lobbyContextMenuLobbyId;
+    closeLobbyContextMenu();
+    if (!lobbyId) {
+      return;
+    }
+
+    void renameLobbyById(lobbyId);
+  });
+
+  lifecycle.on(dom.lobbyContextDelete, "click", () => {
+    const lobbyId = lobbyContextMenuLobbyId;
+    closeLobbyContextMenu();
+    if (!lobbyId) {
+      return;
+    }
+
+    void deleteLobbyById(lobbyId);
   });
 
   const handleQuickHeadphoneToggle = async (): Promise<void> => {
@@ -1963,7 +3046,11 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
   };
 
-  dom.quickConnectionToggle.addEventListener("click", async () => {
+  const handleQuickConnectionToggle = async (): Promise<void> => {
+    if (voiceConnectionInProgress) {
+      return;
+    }
+
     if (voiceConnected) {
       await disconnectFromChat();
       await refreshLobby();
@@ -1974,11 +3061,165 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     if (connected) {
       await refreshLobby();
     }
+  };
+
+  dom.quickConnectionToggle.addEventListener("click", () => {
+    void handleQuickConnectionToggle();
   });
 
   dom.lobbyChatForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendLobbyChatMessage(dom.lobbyChatInput.value);
+  });
+
+  dom.lobbyChatInput.addEventListener("keydown", (event) => {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key !== "Enter") {
+      return;
+    }
+
+    if (
+      keyboardEvent.shiftKey ||
+      keyboardEvent.altKey ||
+      keyboardEvent.ctrlKey ||
+      keyboardEvent.metaKey ||
+      keyboardEvent.isComposing
+    ) {
+      return;
+    }
+
+    keyboardEvent.preventDefault();
+    void sendLobbyChatMessage(dom.lobbyChatInput.value);
+  });
+
+  dom.lobbiesList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const actionTrigger = target.closest<HTMLElement>("[data-lobby-action]");
+    if (actionTrigger) {
+      event.preventDefault();
+      event.stopPropagation();
+      const lobbyId = actionTrigger.dataset.lobbyId?.trim();
+      const action = actionTrigger.dataset.lobbyAction;
+      if (!lobbyId || !action) {
+        return;
+      }
+
+      if (action === "rename") {
+        void renameLobbyById(lobbyId);
+        return;
+      }
+
+      if (action === "delete") {
+        void deleteLobbyById(lobbyId);
+        return;
+      }
+    }
+
+    const trigger = target.closest<HTMLElement>("[data-lobby-id]");
+    const lobbyId = trigger?.dataset.lobbyId?.trim();
+    if (!lobbyId) {
+      return;
+    }
+
+    if (lobbyId === activeLobbyId) {
+      if (!voiceConnected) {
+        void connectToChat();
+      }
+      return;
+    }
+
+    void selectLobbyById(lobbyId, {
+      reconnectVoice: voiceConnected,
+      connectVoice: true,
+    });
+  });
+
+  dom.lobbyCreateForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = dom.lobbyCreateInput.value.trim();
+    if (!name) {
+      return;
+    }
+
+    dom.lobbyCreateButton.disabled = true;
+    try {
+      const result = await window.desktopApi.createLobby({ name });
+      if (!result.ok || !result.data) {
+        setStatus(
+          `Lobi oluşturulamadı: ${getErrorMessage(result.error)}`,
+          true,
+        );
+        return;
+      }
+
+      dom.lobbyCreateInput.value = "";
+      await loadLobbiesFromBackend(true);
+      await selectLobbyById(result.data.lobby.id, {
+        reconnectVoice: voiceConnected,
+        connectVoice: true,
+      });
+    } finally {
+      dom.lobbyCreateButton.disabled = false;
+    }
+  });
+
+  const handleDirectoryClick = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const row = target.closest<HTMLElement>("[data-user-id]");
+    const userId = row?.dataset.userId?.trim();
+    if (!userId) {
+      return;
+    }
+
+    void selectDirectMessagePeer(userId);
+  };
+
+  dom.usersDirectoryList.addEventListener("click", handleDirectoryClick);
+  dom.usersSidebarDirectoryList.addEventListener("click", handleDirectoryClick);
+
+  dom.directMessageForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void sendDirectMessage(dom.directMessageInput.value);
+  });
+
+  dom.directMessageInput.addEventListener("keydown", (event) => {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key !== "Enter") {
+      return;
+    }
+
+    if (
+      keyboardEvent.shiftKey ||
+      keyboardEvent.altKey ||
+      keyboardEvent.ctrlKey ||
+      keyboardEvent.metaKey ||
+      keyboardEvent.isComposing
+    ) {
+      return;
+    }
+
+    keyboardEvent.preventDefault();
+    void sendDirectMessage(dom.directMessageInput.value);
+  });
+
+  dom.lobbyChatToggleButton.addEventListener("click", () => {
+    toggleLobbyChatPanel();
+  });
+
+  dom.lobbyChatReopenButton.addEventListener("click", () => {
+    if (!lobbyChatCollapsed) {
+      return;
+    }
+
+    toggleLobbyChatPanel();
   });
 
   bindVoiceSettingsControls({
@@ -2121,11 +3362,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   const handleAuthenticatedSession = async (): Promise<void> => {
     directoryController.startFriendsPresenceAutoRefresh();
+    startLobbyMemberSnapshotRefresh();
     await ensureBackgroundRealtimeConnection();
+
+    const activeLobbyResult = await window.desktopApi.getActiveLobby();
+    if (activeLobbyResult.ok && activeLobbyResult.data) {
+      activeLobbyId = activeLobbyResult.data.lobbyId;
+    }
+
+    await loadLobbiesFromBackend(true);
+    syncActiveLobbyPresentation();
     await loadProfileFromBackend();
     await directoryController.refreshRegisteredUsers(true);
     await refreshLobby();
     await loadLobbyChatHistory(true);
+    renderDirectMessagePanel();
   };
 
   bindAuthAndProfileForms({
@@ -2145,7 +3396,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     onProfileDisplayNameUpdated: async (displayName) => {
       if (selfUserId) {
         applyLocalDisplayName(selfUserId, displayName);
-        directoryController.renderUserDirectory();
+        renderUserDirectoryWithDmSelection();
         await voiceController.onLobbyUpdated();
       }
 
@@ -2159,16 +3410,15 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     setStatus,
     getErrorMessage,
     onLogoutSuccess: async (session: SessionSnapshot) => {
-      voiceController.cleanupForLobbyExit();
+      cancelPendingShareModalFlow();
+      await voiceController.shutdownMedia();
       resetRemoteMediaAnnouncementState();
       stopAllShareTests();
-      voiceConnected = false;
-      cameraSharing = false;
-      screenSharing = false;
-      updateQuickConnectionButton();
-      updateCameraShareButton();
-      updateScreenShareButton();
+      applyLocalMediaOffState();
       directoryController.stopFriendsPresenceAutoRefresh();
+      hasOpenedUsersPageOnce = false;
+      stopLobbyMemberSnapshotRefresh();
+      stopDirectMessageRefresh();
       authController.renderSession(session);
       selfUserId = null;
       lobbyChatController.setSelfUserId(null);
@@ -2176,9 +3426,17 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       lobbyController.setDisplayNameMap(displayNameByUserId);
       lobbyChatController.setDisplayNameMap(displayNameByUserId);
       lobbyChatController.clear();
+      availableLobbies = [];
+      lobbyMembersByLobbyId.clear();
+      activeLobbyId = runtimeConfig.liveKitDefaultRoom;
+      activeLobbyName = "Ana Lobi";
+      syncActiveLobbyPresentation();
+      directMessageTargetUserId = null;
+      directMessagesById.clear();
+      renderDirectMessagePanel();
       directoryController.clearUsers();
       closeParticipantAudioMenu();
-      directoryController.renderUserDirectory();
+      renderUserDirectoryWithDmSelection();
       workspaceController.setWorkspacePage("lobby");
       setConnectionState("Giriş gerekli", "warn");
     },
@@ -2198,8 +3456,19 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     onAuthenticatedSession: handleAuthenticatedSession,
     onUnauthenticatedSession: () => {
       directoryController.stopFriendsPresenceAutoRefresh();
+      hasOpenedUsersPageOnce = false;
+      stopLobbyMemberSnapshotRefresh();
+      stopDirectMessageRefresh();
       lobbyChatController.setSelfUserId(null);
       lobbyChatController.clear();
+      availableLobbies = [];
+      lobbyMembersByLobbyId.clear();
+      activeLobbyId = runtimeConfig.liveKitDefaultRoom;
+      activeLobbyName = "Ana Lobi";
+      syncActiveLobbyPresentation();
+      directMessageTargetUserId = null;
+      directMessagesById.clear();
+      renderDirectMessagePanel();
     },
     addCleanup: (cleanup) => {
       lifecycle.add(cleanup);
@@ -2223,6 +3492,8 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
 
   authController.setAuthPage("login");
   diagnosticsController.initialize();
+  syncActiveLobbyPresentation();
+  renderDirectMessagePanel();
   applyShareSettingsUi();
   appendMediaDebugLog({
     timestamp: new Date().toISOString(),

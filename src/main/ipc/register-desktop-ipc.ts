@@ -16,6 +16,7 @@ export const registerDesktopIpcHandlers = (
   deps: RegisterDesktopIpcHandlersDeps,
 ): void => {
   let shouldAutoJoinLobby = false;
+  let activeLobbyId = deps.getRuntimeConfig().liveKitDefaultRoom;
 
   const toErrorPayload = (error: unknown): ApiErrorPayload => {
     if (error instanceof DesktopApiError) {
@@ -171,7 +172,7 @@ export const registerDesktopIpcHandlers = (
       );
     }
 
-    deps.realtimeClient.connect(current.accessToken, (event) => {
+    deps.realtimeClient.connect(current.accessToken, activeLobbyId, (event) => {
       if (
         event.type === "connection" &&
         event.status === "connected" &&
@@ -209,6 +210,24 @@ export const registerDesktopIpcHandlers = (
     withAccessToken,
     connectRealtimeForCurrentSession,
     ensureRealtimeConnected,
+    getActiveLobbyId: () => activeLobbyId,
+    setActiveLobbyId: (lobbyId: string) => {
+      const normalizedLobbyID = lobbyId.trim();
+      if (
+        normalizedLobbyID.length === 0 ||
+        normalizedLobbyID === activeLobbyId
+      ) {
+        return;
+      }
+
+      activeLobbyId = normalizedLobbyID;
+      if (
+        deps.realtimeClient.isConnectedOrConnecting() &&
+        deps.sessionStore.get()
+      ) {
+        connectRealtimeForCurrentSession();
+      }
+    },
     isAutoJoinLobbyEnabled: () => shouldAutoJoinLobby,
     setAutoJoinLobbyEnabled: (value: boolean) => {
       shouldAutoJoinLobby = value;
