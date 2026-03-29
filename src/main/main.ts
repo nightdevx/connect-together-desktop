@@ -76,12 +76,54 @@ const windowManager = createWindowManager({
   },
 });
 
+let updateWindowTransitionInFlight = false;
+let queuedUpdateWindowPhase: "downloading" | "installing" | null = null;
+let updateWindowTransitionsBlocked = false;
+
+const ensureUpdateWindowVisible = async (
+  phase: "downloading" | "installing",
+): Promise<void> => {
+  updateWindowTransitionsBlocked = false;
+  queuedUpdateWindowPhase = phase;
+  if (updateWindowTransitionInFlight) {
+    return;
+  }
+
+  updateWindowTransitionInFlight = true;
+  try {
+    while (queuedUpdateWindowPhase) {
+      if (updateWindowTransitionsBlocked) {
+        queuedUpdateWindowPhase = null;
+        return;
+      }
+
+      const nextPhase = queuedUpdateWindowPhase;
+      queuedUpdateWindowPhase = null;
+
+      const shown = await windowManager.showUpdateInstallWindow(nextPhase);
+      if (shown) {
+        windowManager.hideMainWindow();
+        continue;
+      }
+
+      await windowManager.showMainWindow();
+      windowManager.emitRealtimeEvent({
+        type: "system-error",
+        code: "UPDATE_WINDOW_NOT_VISIBLE",
+        message:
+          "Guncelleme penceresi acilamadi. Islem ana pencerede devam edecek.",
+      });
+    }
+  } finally {
+    updateWindowTransitionInFlight = false;
+  }
+};
+
 const appUpdater = createDesktopAppUpdater({
-  onBeforeQuitAndInstall: () => {
+  onBeforeQuitAndInstall: async () => {
     isQuitting = true;
     trayManager.destroyTray();
-    windowManager.hideMainWindow();
-    windowManager.showUpdateInstallWindow("installing");
+    await ensureUpdateWindowVisible("installing");
   },
 });
 
@@ -125,23 +167,27 @@ appUpdater.onStateChanged((state) => {
   windowManager.emitUpdateEvent(state);
 
   if (state.status === "downloading") {
-    windowManager.hideMainWindow();
-    windowManager.showUpdateInstallWindow("downloading");
+    void ensureUpdateWindowVisible("downloading");
     return;
   }
 
   if (state.status === "downloaded" || state.status === "installing") {
-    windowManager.hideMainWindow();
-    windowManager.showUpdateInstallWindow("installing");
-    windowManager.updateInstallWindowPhase("installing");
+    void ensureUpdateWindowVisible("installing");
     return;
   }
 
   if (state.status === "error") {
-    if (!isQuitting) {
-      windowManager.hideUpdateInstallWindow();
-      void windowManager.showMainWindow();
-    }
+    updateWindowTransitionsBlocked = true;
+    queuedUpdateWindowPhase = null;
+    isQuitting = false;
+    windowManager.hideUpdateInstallWindow();
+    void windowManager.showMainWindow();
+
+    windowManager.emitRealtimeEvent({
+      type: "system-error",
+      code: "UPDATE_FAILED",
+      message: state.message ?? "Guncelleme islemi sirasinda bir hata olustu.",
+    });
     return;
   }
 

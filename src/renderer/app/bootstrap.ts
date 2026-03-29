@@ -1046,6 +1046,23 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     desktopApi,
     setStatus,
     getErrorMessage,
+    prepareForUpdate: async () => {
+      setStatus("Guncelleme oncesi ses baglantisi kapatiliyor...", false);
+      cancelPendingShareModalFlow();
+      stopAllShareTests();
+
+      if (voiceConnected || voiceConnectionInProgress) {
+        const disconnected = await disconnectFromChat();
+        if (!disconnected) {
+          throw new Error("Ses baglantisi guvenli sekilde kapatilamadi");
+        }
+      } else {
+        await voiceController.shutdownMedia();
+        applyLocalMediaOffState();
+      }
+
+      resetRemoteMediaAnnouncementState();
+    },
   });
   updaterController.bindEvents();
 

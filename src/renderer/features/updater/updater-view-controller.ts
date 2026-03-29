@@ -12,6 +12,7 @@ interface UpdaterViewControllerDeps {
   desktopApi: DesktopApi;
   setStatus: (message: string, isError: boolean) => void;
   getErrorMessage: (error?: { message?: string }) => string;
+  prepareForUpdate?: () => Promise<void>;
 }
 
 export interface UpdaterViewController {
@@ -23,9 +24,19 @@ export interface UpdaterViewController {
 export const createUpdaterViewController = (
   deps: UpdaterViewControllerDeps,
 ): UpdaterViewController => {
-  const { dom, desktopApi, setStatus, getErrorMessage } = deps;
+  const { dom, desktopApi, setStatus, getErrorMessage, prepareForUpdate } =
+    deps;
   let latestDesktopUpdateState: DesktopUpdateState | null = null;
   let isActionInFlight = false;
+
+  const syncLatestStateFromMain = async (): Promise<void> => {
+    try {
+      const nextState = await desktopApi.getUpdateState();
+      renderDesktopUpdateState(nextState);
+    } catch {
+      // no-op: state push events will eventually refresh UI.
+    }
+  };
 
   const formatCheckedAt = (checkedAt: string | null): string => {
     if (!checkedAt) {
@@ -385,9 +396,7 @@ export const createUpdaterViewController = (
       setDetailedError(failureDetails);
     } finally {
       setActionBusy(false);
-      if (latestDesktopUpdateState) {
-        renderDesktopUpdateState(latestDesktopUpdateState);
-      }
+      await syncLatestStateFromMain();
 
       if (failureDetails) {
         setSettingsSummary("Güncelleme kontrolü başarısız.", "error");
@@ -416,6 +425,27 @@ export const createUpdaterViewController = (
     ) {
       await checkForUpdates();
       return;
+    }
+
+    if (prepareForUpdate) {
+      try {
+        await prepareForUpdate();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "hazırlık adımı başarısız";
+        setStatus(`Güncelleme ön hazırlığı başarısız: ${message}`, true);
+        setSettingsSummary("Güncelleme ön hazırlığı başarısız.", "error");
+        setDetailedError(
+          [
+            `Mesaj: ${message}`,
+            `Status: ${currentState.status}`,
+            `Current Version: v${currentState.currentVersion}`,
+            `Available Version: ${currentState.availableVersion ? `v${currentState.availableVersion}` : "-"}`,
+            "Oneri: Ses/lobi baglantisini manuel kapatip tekrar deneyin.",
+          ].join("\n"),
+        );
+        return;
+      }
     }
 
     setActionBusy(true);
@@ -468,9 +498,7 @@ export const createUpdaterViewController = (
       setDetailedError(failureDetails);
     } finally {
       setActionBusy(false);
-      if (latestDesktopUpdateState) {
-        renderDesktopUpdateState(latestDesktopUpdateState);
-      }
+      await syncLatestStateFromMain();
 
       if (failureDetails) {
         setSettingsSummary("Güncelleme işlemi başarısız.", "error");

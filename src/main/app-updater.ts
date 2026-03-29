@@ -13,7 +13,7 @@ interface DesktopAppUpdater {
 }
 
 interface CreateDesktopAppUpdaterOptions {
-  onBeforeQuitAndInstall?: () => void;
+  onBeforeQuitAndInstall?: () => void | Promise<void>;
 }
 
 const isFinalCheckState = (status: DesktopUpdateState["status"]): boolean => {
@@ -171,7 +171,7 @@ export const createDesktopAppUpdater = (
     });
   };
 
-  const quitAndInstall = (): void => {
+  const quitAndInstall = async (): Promise<void> => {
     if (didTriggerQuitAndInstall) {
       appendDiagnosticsLog("warn", "quit-and-install-skip", {
         reason: "already-triggered",
@@ -193,16 +193,20 @@ export const createDesktopAppUpdater = (
     });
 
     try {
-      options.onBeforeQuitAndInstall?.();
+      await options.onBeforeQuitAndInstall?.();
     } catch (error) {
       console.warn("[desktop] onBeforeQuitAndInstall failed:", error);
     }
 
     // Give the dedicated update window enough time to paint before quitting.
-    setTimeout(() => {
-      appendDiagnosticsLog("info", "quit-and-install-dispatch");
-      autoUpdater.quitAndInstall(true, true);
-    }, 1350);
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 600);
+    });
+
+    appendDiagnosticsLog("info", "quit-and-install-dispatch");
+    autoUpdater.quitAndInstall(true, true);
   };
 
   const emit = (): void => {
@@ -307,7 +311,7 @@ export const createDesktopAppUpdater = (
 
       if (installAfterDownloadRequested) {
         // Silent install avoids showing NSIS assistant pages during update.
-        quitAndInstall();
+        void quitAndInstall();
       }
     });
 
@@ -372,7 +376,7 @@ export const createDesktopAppUpdater = (
       appendDiagnosticsLog("info", "apply-update-direct-install", {
         status: state.status,
       });
-      quitAndInstall();
+      void quitAndInstall();
       return {
         accepted: true,
         state: cloneState(state),

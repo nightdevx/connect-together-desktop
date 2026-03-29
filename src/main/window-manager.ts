@@ -16,7 +16,7 @@ export interface WindowManager {
   ensureMainWindow: () => Promise<void>;
   showMainWindow: () => Promise<void>;
   hideMainWindow: () => void;
-  showUpdateInstallWindow: (phase?: UpdateInstallPhase) => void;
+  showUpdateInstallWindow: (phase?: UpdateInstallPhase) => Promise<boolean>;
   hideUpdateInstallWindow: () => void;
   updateInstallWindowPhase: (phase: UpdateInstallPhase) => void;
   emitRealtimeEvent: (payload: unknown) => void;
@@ -80,21 +80,66 @@ export const createWindowManager = (deps: WindowManagerDeps): WindowManager => {
     mainWindow.hide();
   };
 
+  const waitForUpdateInstallWindowVisible = async (
+    win: BrowserWindow,
+    timeoutMs = 4500,
+  ): Promise<boolean> => {
+    if (!win || win.isDestroyed()) {
+      return false;
+    }
+
+    if (win.isVisible()) {
+      return true;
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let resolved = false;
+
+      const complete = (value: boolean): void => {
+        if (resolved) {
+          return;
+        }
+
+        resolved = true;
+        clearTimeout(timeoutRef);
+        win.removeListener("show", onShow);
+        win.removeListener("closed", onClosed);
+        resolve(value);
+      };
+
+      const onShow = (): void => {
+        complete(true);
+      };
+
+      const onClosed = (): void => {
+        complete(false);
+      };
+
+      const timeoutRef = setTimeout(() => {
+        complete(!win.isDestroyed() && win.isVisible());
+      }, timeoutMs);
+
+      win.once("show", onShow);
+      win.once("closed", onClosed);
+    });
+  };
+
   const showUpdateInstallWindow = (
     phase: UpdateInstallPhase = "installing",
-  ): void => {
+  ): Promise<boolean> => {
     if (updateInstallWindow && !updateInstallWindow.isDestroyed()) {
       setUpdateInstallWindowPhase(updateInstallWindow, phase);
       updateInstallWindow.show();
       updateInstallWindow.focus();
-      return;
+      return Promise.resolve(true);
     }
 
-    updateInstallWindow = createUpdateInstallWindow();
-    setUpdateInstallWindowPhase(updateInstallWindow, phase);
+    updateInstallWindow = createUpdateInstallWindow(phase);
     updateInstallWindow.on("closed", () => {
       updateInstallWindow = null;
     });
+
+    return waitForUpdateInstallWindowVisible(updateInstallWindow);
   };
 
   const hideUpdateInstallWindow = (): void => {

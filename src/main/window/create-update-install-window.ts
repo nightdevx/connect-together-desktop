@@ -6,6 +6,17 @@ import {
 
 export type UpdateInstallPhase = "downloading" | "installing";
 
+const normalizeUpdateInstallPhase = (
+  phase: UpdateInstallPhase,
+): UpdateInstallPhase => {
+  return phase === "installing" ? "installing" : "downloading";
+};
+
+const pendingWindowPhaseByRef = new WeakMap<
+  BrowserWindow,
+  UpdateInstallPhase
+>();
+
 const resolveUpdateWindowIconPath = (): string => {
   const fallbackFile: "logo.png" | "logo.ico" =
     process.platform === "win32" ? "logo.ico" : "logo.png";
@@ -59,7 +70,7 @@ const buildNeonLogoSvg = (): string => {
 `;
 };
 
-const createMarkup = (): string => {
+const createMarkup = (initialPhase: UpdateInstallPhase): string => {
   const logoDataUrl = resolveLogoDataUrl();
   const logoImageMarkup = logoDataUrl
     ? `<img class="logo-underlay" src="${logoDataUrl}" alt="" aria-hidden="true" />`
@@ -382,12 +393,36 @@ const createMarkup = (): string => {
         };
 
         window.__ctSetUpdatePhase = applyPhase;
-        applyPhase("downloading");
+        applyPhase(${JSON.stringify(initialPhase)});
       })();
     </script>
   </body>
 </html>
 `;
+};
+
+const flushPendingWindowPhase = (win: BrowserWindow): void => {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+
+  const pendingPhase = pendingWindowPhaseByRef.get(win);
+  if (!pendingPhase) {
+    return;
+  }
+
+  pendingWindowPhaseByRef.delete(win);
+  void win.webContents
+    .executeJavaScript(
+      `window.__ctSetUpdatePhase && window.__ctSetUpdatePhase(${JSON.stringify(pendingPhase)})`,
+      true,
+    )
+    .catch((error) => {
+      console.warn(
+        "[desktop] update install window phase apply failed:",
+        error,
+      );
+    });
 };
 
 export const setUpdateInstallWindowPhase = (
@@ -398,18 +433,24 @@ export const setUpdateInstallWindowPhase = (
     return;
   }
 
-  const normalizedPhase = phase === "installing" ? "installing" : "downloading";
-  void win.webContents
-    .executeJavaScript(
-      `window.__ctSetUpdatePhase && window.__ctSetUpdatePhase("${normalizedPhase}")`,
-      true,
-    )
-    .catch(() => {
-      // no-op: window may be closing while install is starting
+  const normalizedPhase = normalizeUpdateInstallPhase(phase);
+  pendingWindowPhaseByRef.set(win, normalizedPhase);
+
+  if (win.webContents.isLoading()) {
+    win.webContents.once("did-finish-load", () => {
+      flushPendingWindowPhase(win);
     });
+    return;
+  }
+
+  flushPendingWindowPhase(win);
 };
 
-export const createUpdateInstallWindow = (): BrowserWindow => {
+export const createUpdateInstallWindow = (
+  initialPhase: UpdateInstallPhase = "downloading",
+): BrowserWindow => {
+  const normalizedInitialPhase = normalizeUpdateInstallPhase(initialPhase);
+
   const win = new BrowserWindow({
     width: 360,
     height: 360,
@@ -439,10 +480,16 @@ export const createUpdateInstallWindow = (): BrowserWindow => {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.removeMenu();
 
-  const markup = createMarkup();
+  pendingWindowPhaseByRef.set(win, normalizedInitialPhase);
+
+  const markup = createMarkup(normalizedInitialPhase);
   void win.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(markup)}`,
   );
+
+  win.webContents.once("did-finish-load", () => {
+    flushPendingWindowPhase(win);
+  });
 
   win.once("ready-to-show", () => {
     if (win.isDestroyed()) {
