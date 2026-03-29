@@ -39,9 +39,12 @@ export interface DomRefs {
   memberCount: HTMLElement;
   members: HTMLUListElement;
   lobbiesList: HTMLUListElement;
+  lobbyCreateOpenButton: HTMLButtonElement;
+  lobbyCreateModal: HTMLElement;
   lobbyCreateForm: HTMLFormElement;
   lobbyCreateInput: HTMLInputElement;
   lobbyCreateButton: HTMLButtonElement;
+  lobbyCreateModalCancel: HTMLButtonElement;
   usersDirectoryCount: HTMLElement;
   usersSidebarDirectoryList: HTMLUListElement;
   usersDirectoryList: HTMLUListElement;
@@ -228,9 +231,16 @@ export const queryDomRefs = (): DomRefs => {
     memberCount: requireElement("memberCount"),
     members: requireElement<HTMLUListElement>("members"),
     lobbiesList: requireElement<HTMLUListElement>("lobbiesList"),
+    lobbyCreateOpenButton: requireElement<HTMLButtonElement>(
+      "lobbyCreateOpenButton",
+    ),
+    lobbyCreateModal: requireElement("lobbyCreateModal"),
     lobbyCreateForm: requireElement<HTMLFormElement>("lobbyCreateForm"),
     lobbyCreateInput: requireElement<HTMLInputElement>("lobbyCreateInput"),
     lobbyCreateButton: requireElement<HTMLButtonElement>("lobbyCreateButton"),
+    lobbyCreateModalCancel: requireElement<HTMLButtonElement>(
+      "lobbyCreateModalCancel",
+    ),
     usersDirectoryCount: requireElement("usersDirectoryCount"),
     usersSidebarDirectoryList: requireElement<HTMLUListElement>(
       "usersSidebarDirectoryList",

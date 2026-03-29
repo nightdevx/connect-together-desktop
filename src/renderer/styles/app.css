@@ -318,6 +318,48 @@ body.window-maximized .window-icon-restore {
   letter-spacing: 0.12em;
 }
 
+.side-view-header-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lobby-create-open {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: color-mix(in srgb, var(--color-surface-3) 80%, transparent);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.lobby-create-open svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.lobby-create-open:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-text-primary);
+}
+
+.lobby-create-open:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 65%, transparent);
+  outline-offset: 2px;
+}
+
 .side-view-body > p {
   color: rgba(191, 201, 235, 0.8);
   letter-spacing: 0.015em;
@@ -2510,6 +2552,46 @@ button:active {
 
 .lobby-create-form #lobbyCreateInput {
   min-height: 32px;
+}
+
+.lobby-create-modal-panel {
+  width: min(92vw, 460px);
+  max-height: min(86vh, 520px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.lobby-create-modal-header {
+  display: grid;
+  gap: 6px;
+}
+
+.lobby-create-modal-title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.lobby-create-modal-description {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lobby-create-modal-form {
+  display: grid;
+  gap: 12px;
+}
+
+.lobby-create-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .lobby-room-card {

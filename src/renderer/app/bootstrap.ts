@@ -2928,6 +2928,21 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     dom.lobbyActionModalInputWrap.classList.add("hidden");
   };
 
+  const closeLobbyCreateModal = (): void => {
+    dom.lobbyCreateModal.classList.add("hidden");
+    dom.lobbyCreateModal.setAttribute("aria-hidden", "true");
+    dom.lobbyCreateInput.value = "";
+    dom.lobbyCreateButton.disabled = false;
+  };
+
+  const openLobbyCreateModal = (): void => {
+    dom.lobbyCreateModal.classList.remove("hidden");
+    dom.lobbyCreateModal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => {
+      dom.lobbyCreateInput.focus();
+    }, 0);
+  };
+
   const openRenameLobbyModal = (lobbyId: string): void => {
     const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
     if (!current) {
@@ -3065,6 +3080,20 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     };
 
     void execute();
+  });
+
+  lifecycle.on(dom.lobbyCreateOpenButton, "click", () => {
+    openLobbyCreateModal();
+  });
+
+  lifecycle.on(dom.lobbyCreateModalCancel, "click", () => {
+    closeLobbyCreateModal();
+  });
+
+  lifecycle.on(dom.lobbyCreateModal, "click", (event) => {
+    if (event.target === dom.lobbyCreateModal) {
+      closeLobbyCreateModal();
+    }
   });
 
   const handleQuickHeadphoneToggle = async (): Promise<void> => {
@@ -3254,6 +3283,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
         reconnectVoice: voiceConnected,
         connectVoice: true,
       });
+      closeLobbyCreateModal();
     } finally {
       dom.lobbyCreateButton.disabled = false;
     }
@@ -3450,6 +3480,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       }
       if (!dom.lobbyActionModal.classList.contains("hidden")) {
         closeLobbyActionModal();
+      }
+      if (!dom.lobbyCreateModal.classList.contains("hidden")) {
+        closeLobbyCreateModal();
       }
       shareModalController.completeScreenModalSelection(false);
     }

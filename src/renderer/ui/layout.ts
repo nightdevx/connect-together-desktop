@@ -135,16 +135,22 @@ export const buildDesktopLayout = (): string => {
             <!-- Lobby Sidebar -->
             <section id="lobbySidebar" class="side-view min-h-0 grid grid-rows-[auto_1fr]">
               <header class="side-view-header px-4 pt-4 pb-3 border-b border-border">
-                <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Lobiler</h2>
+                <div class="side-view-header-row">
+                  <h2 class="text-base font-bold tracking-[0.08em] uppercase text-text-primary m-0">Lobiler</h2>
+                  <button
+                    id="lobbyCreateOpenButton"
+                    class="lobby-create-open"
+                    type="button"
+                    aria-label="Yeni lobi oluştur"
+                    title="Yeni lobi oluştur"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M11 5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5Z" />
+                    </svg>
+                  </button>
+                </div>
               </header>
               <div class="side-view-body overflow-auto px-3 py-3">
-                <div class="lobby-create-card rounded-xl border border-border bg-surface-2/35 p-3 mb-3">
-                  <p class="text-text-muted text-[11px] mb-2 uppercase tracking-wider">Yeni Lobi</p>
-                  <form id="lobbyCreateForm" class="lobby-create-form flex items-center gap-2">
-                    <input id="lobbyCreateInput" type="text" maxlength="64" placeholder="Yeni lobi adı" class="flex-1 text-xs" />
-                    <button id="lobbyCreateButton" class="btn-secondary h-8 px-3 text-xs" type="submit">Oluştur</button>
-                  </form>
-                </div>
                 <ul id="lobbiesList" class="list-none m-0 p-0 flex flex-col gap-2 mb-2"></ul>
                 <ul id="members" class="hidden list-none m-0 p-0 flex-col gap-2"></ul>
               </div>
@@ -736,6 +742,23 @@ export const buildDesktopLayout = (): string => {
             <button id="lobbyActionModalCancel" class="btn-secondary h-10 px-4 text-xs" type="button">İptal</button>
             <button id="lobbyActionModalConfirm" class="btn-primary h-10 px-4 text-xs" type="button">Onayla</button>
           </footer>
+        </div>
+      </section>
+
+      <section id="lobbyCreateModal" class="capture-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="lobbyCreateModalTitle">
+        <div class="capture-modal-panel lobby-create-modal-panel rounded-2xl border border-border bg-surface-1 p-5 glass-subtle">
+          <header class="lobby-create-modal-header">
+            <h3 id="lobbyCreateModalTitle" class="lobby-create-modal-title">Yeni Lobi Oluştur</h3>
+            <p class="lobby-create-modal-description">Lobi adını belirle ve oluştur. Oluşturduktan sonra otomatik olarak o lobiye geçilir.</p>
+          </header>
+          <form id="lobbyCreateForm" class="lobby-create-modal-form">
+            <label class="text-text-muted text-xs font-medium block" for="lobbyCreateInput">Lobi adı</label>
+            <input id="lobbyCreateInput" type="text" maxlength="64" placeholder="Örn: Tasarım Toplantısı" class="mt-1" />
+            <div class="lobby-create-modal-actions">
+              <button id="lobbyCreateModalCancel" class="btn-secondary h-10 px-4 text-xs" type="button">İptal</button>
+              <button id="lobbyCreateButton" class="btn-primary h-10 px-4 text-xs" type="submit">Oluştur</button>
+            </div>
+          </form>
         </div>
       </section>
 
