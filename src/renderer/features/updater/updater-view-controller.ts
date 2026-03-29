@@ -183,15 +183,18 @@ export const createUpdaterViewController = (
     dom.settingsUpdateCheckButton.disabled =
       isActionInFlight ||
       state.status === "checking" ||
-      state.status === "downloading";
+      state.status === "downloading" ||
+      state.status === "installing";
     dom.settingsUpdateCheckButton.textContent =
       state.status === "checking"
         ? "Kontrol Ediliyor..."
         : state.status === "downloading"
           ? "İndirme Sürüyor..."
-          : isActionInFlight
-            ? "İşleniyor..."
-            : "Güncelleme Kontrol Et";
+          : state.status === "installing"
+            ? "Kurulum Sürüyor..."
+            : isActionInFlight
+              ? "İşleniyor..."
+              : "Güncelleme Kontrol Et";
 
     if (state.status === "idle" || state.status === "not-available") {
       setUpdateHint(null);
@@ -257,6 +260,20 @@ export const createUpdaterViewController = (
         "ok",
       );
       setSettingsUpdateInstallButton(null);
+      return;
+    }
+
+    if (state.status === "installing") {
+      setUpdateHint("Güncelleme kuruluyor, uygulama yeniden başlatılacak...");
+      setUpdateActionButton(null);
+      setSettingsSummary(
+        `${availableVersion} kuruluyor. Kurulum bitince uygulama otomatik açılacak.`,
+        "warn",
+      );
+      setSettingsUpdateInstallButton({
+        label: "Kuruluyor...",
+        disabled: true,
+      });
       return;
     }
 

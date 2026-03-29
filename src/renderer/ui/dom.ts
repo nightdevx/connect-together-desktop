@@ -137,6 +137,13 @@ export interface DomRefs {
   lobbyContextMenuTitle: HTMLElement;
   lobbyContextRename: HTMLButtonElement;
   lobbyContextDelete: HTMLButtonElement;
+  lobbyActionModal: HTMLElement;
+  lobbyActionModalTitle: HTMLElement;
+  lobbyActionModalDescription: HTMLElement;
+  lobbyActionModalInputWrap: HTMLElement;
+  lobbyActionModalInput: HTMLInputElement;
+  lobbyActionModalCancel: HTMLButtonElement;
+  lobbyActionModalConfirm: HTMLButtonElement;
   profileForm: HTMLFormElement;
   profileDisplayName: HTMLInputElement;
   profileEmail: HTMLInputElement;
@@ -388,6 +395,19 @@ export const queryDomRefs = (): DomRefs => {
     lobbyContextMenuTitle: requireElement("lobbyContextMenuTitle"),
     lobbyContextRename: requireElement<HTMLButtonElement>("lobbyContextRename"),
     lobbyContextDelete: requireElement<HTMLButtonElement>("lobbyContextDelete"),
+    lobbyActionModal: requireElement("lobbyActionModal"),
+    lobbyActionModalTitle: requireElement("lobbyActionModalTitle"),
+    lobbyActionModalDescription: requireElement("lobbyActionModalDescription"),
+    lobbyActionModalInputWrap: requireElement("lobbyActionModalInputWrap"),
+    lobbyActionModalInput: requireElement<HTMLInputElement>(
+      "lobbyActionModalInput",
+    ),
+    lobbyActionModalCancel: requireElement<HTMLButtonElement>(
+      "lobbyActionModalCancel",
+    ),
+    lobbyActionModalConfirm: requireElement<HTMLButtonElement>(
+      "lobbyActionModalConfirm",
+    ),
     profileForm: requireElement<HTMLFormElement>("profileForm"),
     profileDisplayName: requireElement<HTMLInputElement>("profileDisplayName"),
     profileEmail: requireElement<HTMLInputElement>("profileEmail"),

@@ -75,7 +75,7 @@ const appUpdater = createDesktopAppUpdater({
     isQuitting = true;
     trayManager.destroyTray();
     windowManager.hideMainWindow();
-    windowManager.showUpdateInstallWindow();
+    windowManager.showUpdateInstallWindow("installing");
   },
 });
 
@@ -109,6 +109,31 @@ trayManager = createTrayManager({
 
 appUpdater.onStateChanged((state) => {
   windowManager.emitUpdateEvent(state);
+
+  if (state.status === "downloading") {
+    windowManager.hideMainWindow();
+    windowManager.showUpdateInstallWindow("downloading");
+    return;
+  }
+
+  if (state.status === "downloaded" || state.status === "installing") {
+    windowManager.hideMainWindow();
+    windowManager.showUpdateInstallWindow("installing");
+    windowManager.updateInstallWindowPhase("installing");
+    return;
+  }
+
+  if (state.status === "error") {
+    if (!isQuitting) {
+      windowManager.hideUpdateInstallWindow();
+      void windowManager.showMainWindow();
+    }
+    return;
+  }
+
+  if (!isQuitting) {
+    windowManager.hideUpdateInstallWindow();
+  }
 });
 
 registerDesktopIpcHandlers({

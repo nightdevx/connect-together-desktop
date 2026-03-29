@@ -242,6 +242,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   let lobbyMemberSnapshotRefreshTimer: number | null = null;
   let lobbyMemberSnapshotRefreshInFlight = false;
   let lobbyContextMenuLobbyId: string | null = null;
+  let lobbyActionModalState: {
+    mode: "rename" | "delete";
+    lobbyId: string;
+  } | null = null;
   let remoteMediaAnnouncementInitialized = false;
   const remoteMediaStateByUserId = new Map<
     string,
@@ -2875,15 +2879,10 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     closeLobbyContextMenu();
   });
 
-  const renameLobbyById = async (lobbyId: string): Promise<void> => {
-    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
-    const nextName = window
-      .prompt("Lobi adını güncelle", current?.name ?? "")
-      ?.trim();
-    if (!nextName) {
-      return;
-    }
-
+  const renameLobbyById = async (
+    lobbyId: string,
+    nextName: string,
+  ): Promise<void> => {
     const response = await window.desktopApi.updateLobby({
       lobbyId,
       name: nextName,
@@ -2899,14 +2898,6 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
   };
 
   const deleteLobbyById = async (lobbyId: string): Promise<void> => {
-    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
-    const confirmed = window.confirm(
-      `\"${current?.name ?? lobbyId}\" lobisini silmek istediğine emin misin?`,
-    );
-    if (!confirmed) {
-      return;
-    }
-
     const wasActiveLobby = lobbyId === activeLobbyId;
     const response = await window.desktopApi.deleteLobby({ lobbyId });
     if (!response.ok || !response.data || response.data.deleted !== true) {
@@ -2926,6 +2917,61 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     }
 
     setStatus("Lobi silindi", false);
+  };
+
+  const closeLobbyActionModal = (): void => {
+    lobbyActionModalState = null;
+    dom.lobbyActionModal.classList.add("hidden");
+    dom.lobbyActionModal.setAttribute("aria-hidden", "true");
+    dom.lobbyActionModalInput.value = "";
+    dom.lobbyActionModalConfirm.disabled = false;
+    dom.lobbyActionModalInputWrap.classList.add("hidden");
+  };
+
+  const openRenameLobbyModal = (lobbyId: string): void => {
+    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
+    if (!current) {
+      return;
+    }
+
+    lobbyActionModalState = { mode: "rename", lobbyId };
+    dom.lobbyActionModalTitle.textContent = "Lobiyi düzenle";
+    dom.lobbyActionModalDescription.textContent =
+      "Lobi için yeni adı gir ve kaydet.";
+    dom.lobbyActionModalInputWrap.classList.remove("hidden");
+    dom.lobbyActionModalInput.value = current.name;
+    dom.lobbyActionModalConfirm.textContent = "Kaydet";
+    dom.lobbyActionModalConfirm.classList.remove("btn-danger");
+    dom.lobbyActionModalConfirm.classList.add("btn-primary");
+    dom.lobbyActionModalConfirm.disabled = current.name.trim().length === 0;
+    dom.lobbyActionModal.classList.remove("hidden");
+    dom.lobbyActionModal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => {
+      dom.lobbyActionModalInput.focus();
+      dom.lobbyActionModalInput.select();
+    }, 0);
+  };
+
+  const openDeleteLobbyModal = (lobbyId: string): void => {
+    const current = availableLobbies.find((lobby) => lobby.id === lobbyId);
+    if (!current) {
+      return;
+    }
+
+    lobbyActionModalState = { mode: "delete", lobbyId };
+    dom.lobbyActionModalTitle.textContent = "Lobiyi sil";
+    dom.lobbyActionModalDescription.textContent = `\"${current.name}\" lobisini kalıcı olarak silmek istediğine emin misin?`;
+    dom.lobbyActionModalInputWrap.classList.add("hidden");
+    dom.lobbyActionModalInput.value = "";
+    dom.lobbyActionModalConfirm.textContent = "Sil";
+    dom.lobbyActionModalConfirm.classList.remove("btn-primary");
+    dom.lobbyActionModalConfirm.classList.add("btn-danger");
+    dom.lobbyActionModalConfirm.disabled = false;
+    dom.lobbyActionModal.classList.remove("hidden");
+    dom.lobbyActionModal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => {
+      dom.lobbyActionModalConfirm.focus();
+    }, 0);
   };
 
   lifecycle.on(dom.lobbiesList, "contextmenu", (event) => {
@@ -2962,7 +3008,7 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    void renameLobbyById(lobbyId);
+    openRenameLobbyModal(lobbyId);
   });
 
   lifecycle.on(dom.lobbyContextDelete, "click", () => {
@@ -2972,7 +3018,53 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       return;
     }
 
-    void deleteLobbyById(lobbyId);
+    openDeleteLobbyModal(lobbyId);
+  });
+
+  lifecycle.on(dom.lobbyActionModalInput, "input", () => {
+    if (lobbyActionModalState?.mode !== "rename") {
+      return;
+    }
+
+    dom.lobbyActionModalConfirm.disabled =
+      dom.lobbyActionModalInput.value.trim().length === 0;
+  });
+
+  lifecycle.on(dom.lobbyActionModalCancel, "click", () => {
+    closeLobbyActionModal();
+  });
+
+  lifecycle.on(dom.lobbyActionModal, "click", (event) => {
+    if (event.target === dom.lobbyActionModal) {
+      closeLobbyActionModal();
+    }
+  });
+
+  lifecycle.on(dom.lobbyActionModalConfirm, "click", () => {
+    const state = lobbyActionModalState;
+    if (!state) {
+      return;
+    }
+
+    const execute = async (): Promise<void> => {
+      dom.lobbyActionModalConfirm.disabled = true;
+      try {
+        if (state.mode === "rename") {
+          const nextName = dom.lobbyActionModalInput.value.trim();
+          if (!nextName) {
+            return;
+          }
+
+          await renameLobbyById(state.lobbyId, nextName);
+        } else {
+          await deleteLobbyById(state.lobbyId);
+        }
+      } finally {
+        closeLobbyActionModal();
+      }
+    };
+
+    void execute();
   });
 
   const handleQuickHeadphoneToggle = async (): Promise<void> => {
@@ -3109,12 +3201,12 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
       }
 
       if (action === "rename") {
-        void renameLobbyById(lobbyId);
+        openRenameLobbyModal(lobbyId);
         return;
       }
 
       if (action === "delete") {
-        void deleteLobbyById(lobbyId);
+        openDeleteLobbyModal(lobbyId);
         return;
       }
     }
@@ -3355,6 +3447,9 @@ export const bootstrapDesktopApp = async (dom: DomRefs): Promise<void> => {
     if (keyboardEvent.key === "Escape") {
       if (participantAudioMenuUserId !== null) {
         closeParticipantAudioMenu();
+      }
+      if (!dom.lobbyActionModal.classList.contains("hidden")) {
+        closeLobbyActionModal();
       }
       shareModalController.completeScreenModalSelection(false);
     }

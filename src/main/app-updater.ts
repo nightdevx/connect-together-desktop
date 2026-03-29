@@ -14,6 +14,12 @@ interface CreateDesktopAppUpdaterOptions {
   onBeforeQuitAndInstall?: () => void;
 }
 
+const isFinalCheckState = (status: DesktopUpdateState["status"]): boolean => {
+  return (
+    status === "available" || status === "not-available" || status === "error"
+  );
+};
+
 const cloneState = (state: DesktopUpdateState): DesktopUpdateState => {
   return {
     status: state.status,
@@ -64,6 +70,43 @@ export const createDesktopAppUpdater = (
   let installAfterDownloadRequested = false;
   let didTriggerQuitAndInstall = false;
 
+  const waitForUpdateState = async (
+    predicate: (nextState: DesktopUpdateState) => boolean,
+    timeoutMs = 12_000,
+  ): Promise<DesktopUpdateState> => {
+    const current = cloneState(state);
+    if (predicate(current)) {
+      return current;
+    }
+
+    return new Promise<DesktopUpdateState>((resolve) => {
+      let resolved = false;
+
+      const complete = (snapshot: DesktopUpdateState): void => {
+        if (resolved) {
+          return;
+        }
+
+        resolved = true;
+        listeners.delete(listener);
+        clearTimeout(timeoutRef);
+        resolve(snapshot);
+      };
+
+      const listener = (nextState: DesktopUpdateState): void => {
+        if (predicate(nextState)) {
+          complete(nextState);
+        }
+      };
+
+      const timeoutRef = setTimeout(() => {
+        complete(cloneState(state));
+      }, timeoutMs);
+
+      listeners.add(listener);
+    });
+  };
+
   const quitAndInstall = (): void => {
     if (didTriggerQuitAndInstall) {
       return;
@@ -71,6 +114,11 @@ export const createDesktopAppUpdater = (
 
     didTriggerQuitAndInstall = true;
     installAfterDownloadRequested = false;
+    updateState({
+      status: "installing",
+      downloadProgressPercent: 100,
+      message: "Güncelleme kuruluyor...",
+    });
 
     try {
       options.onBeforeQuitAndInstall?.();
@@ -81,7 +129,7 @@ export const createDesktopAppUpdater = (
     // Give the dedicated update window enough time to paint before quitting.
     setTimeout(() => {
       autoUpdater.quitAndInstall(true, true);
-    }, 450);
+    }, 1350);
   };
 
   const emit = (): void => {
@@ -224,6 +272,12 @@ export const createDesktopAppUpdater = (
     try {
       if (state.status !== "available") {
         await autoUpdater.checkForUpdates();
+
+        if (!isFinalCheckState(state.status)) {
+          await waitForUpdateState((nextState) =>
+            isFinalCheckState(nextState.status),
+          );
+        }
       }
 
       if (state.status !== "available") {

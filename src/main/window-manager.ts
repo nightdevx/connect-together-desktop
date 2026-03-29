@@ -1,7 +1,11 @@
 import { BrowserWindow } from "electron";
 import type { DesktopUpdateState } from "./types";
 import { createMainWindow } from "./window/create-main-window";
-import { createUpdateInstallWindow } from "./window/create-update-install-window";
+import {
+  createUpdateInstallWindow,
+  setUpdateInstallWindowPhase,
+  type UpdateInstallPhase,
+} from "./window/create-update-install-window";
 
 interface WindowManagerDeps {
   shouldHideMainWindowOnClose: () => boolean;
@@ -12,7 +16,9 @@ export interface WindowManager {
   ensureMainWindow: () => Promise<void>;
   showMainWindow: () => Promise<void>;
   hideMainWindow: () => void;
-  showUpdateInstallWindow: () => void;
+  showUpdateInstallWindow: (phase?: UpdateInstallPhase) => void;
+  hideUpdateInstallWindow: () => void;
+  updateInstallWindowPhase: (phase: UpdateInstallPhase) => void;
   emitRealtimeEvent: (payload: unknown) => void;
   emitUpdateEvent: (payload: DesktopUpdateState) => void;
 }
@@ -74,17 +80,37 @@ export const createWindowManager = (deps: WindowManagerDeps): WindowManager => {
     mainWindow.hide();
   };
 
-  const showUpdateInstallWindow = (): void => {
+  const showUpdateInstallWindow = (
+    phase: UpdateInstallPhase = "installing",
+  ): void => {
     if (updateInstallWindow && !updateInstallWindow.isDestroyed()) {
+      setUpdateInstallWindowPhase(updateInstallWindow, phase);
       updateInstallWindow.show();
       updateInstallWindow.focus();
       return;
     }
 
     updateInstallWindow = createUpdateInstallWindow();
+    setUpdateInstallWindowPhase(updateInstallWindow, phase);
     updateInstallWindow.on("closed", () => {
       updateInstallWindow = null;
     });
+  };
+
+  const hideUpdateInstallWindow = (): void => {
+    if (!updateInstallWindow || updateInstallWindow.isDestroyed()) {
+      return;
+    }
+
+    updateInstallWindow.hide();
+  };
+
+  const updateInstallWindowPhase = (phase: UpdateInstallPhase): void => {
+    if (!updateInstallWindow || updateInstallWindow.isDestroyed()) {
+      return;
+    }
+
+    setUpdateInstallWindowPhase(updateInstallWindow, phase);
   };
 
   const emitRealtimeEvent = (payload: unknown): void => {
@@ -108,6 +134,8 @@ export const createWindowManager = (deps: WindowManagerDeps): WindowManager => {
     showMainWindow,
     hideMainWindow,
     showUpdateInstallWindow,
+    hideUpdateInstallWindow,
+    updateInstallWindowPhase,
     emitRealtimeEvent,
     emitUpdateEvent,
   };

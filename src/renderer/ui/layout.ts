@@ -722,6 +722,23 @@ export const buildDesktopLayout = (): string => {
         <button id="lobbyContextDelete" class="lobby-context-menu-action danger" type="button" role="menuitem">Lobiyi sil</button>
       </section>
 
+      <section id="lobbyActionModal" class="capture-modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="lobbyActionModalTitle">
+        <div class="capture-modal-panel lobby-action-modal-panel rounded-2xl border border-border bg-surface-1 p-5 glass-subtle">
+          <header class="lobby-action-modal-header">
+            <h3 id="lobbyActionModalTitle" class="lobby-action-modal-title">Lobi işlemi</h3>
+            <p id="lobbyActionModalDescription" class="lobby-action-modal-description">Lobi işlemini onayla.</p>
+          </header>
+          <div id="lobbyActionModalInputWrap" class="lobby-action-modal-input-wrap">
+            <label class="text-text-muted text-xs font-medium block" for="lobbyActionModalInput">Lobi adı</label>
+            <input id="lobbyActionModalInput" type="text" maxlength="64" class="mt-1" placeholder="Lobi adı" />
+          </div>
+          <footer class="lobby-action-modal-actions">
+            <button id="lobbyActionModalCancel" class="btn-secondary h-10 px-4 text-xs" type="button">İptal</button>
+            <button id="lobbyActionModalConfirm" class="btn-primary h-10 px-4 text-xs" type="button">Onayla</button>
+          </footer>
+        </div>
+      </section>
+
       <section id="toastContainer" class="toast-stack" aria-live="polite" aria-atomic="false"></section>
 
     </main>

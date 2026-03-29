@@ -2226,6 +2226,46 @@ button:active {
   color: #fecdd3;
 }
 
+.lobby-action-modal-panel {
+  width: min(92vw, 460px);
+  max-height: min(86vh, 520px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.lobby-action-modal-header {
+  display: grid;
+  gap: 6px;
+}
+
+.lobby-action-modal-title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.lobby-action-modal-description {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lobby-action-modal-input-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.lobby-action-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .participant-card-footer {
   position: absolute;
   left: 0;

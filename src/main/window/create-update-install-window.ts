@@ -4,6 +4,8 @@ import {
   resolvePreferredLogoAssetPath,
 } from "../asset-resolver";
 
+export type UpdateInstallPhase = "downloading" | "installing";
+
 const resolveUpdateWindowIconPath = (): string => {
   const fallbackFile: "logo.png" | "logo.ico" =
     process.platform === "win32" ? "logo.ico" : "logo.png";
@@ -219,6 +221,73 @@ const createMarkup = (): string => {
         letter-spacing: 0.01em;
       }
 
+      .phase-title {
+        font-size: 18px;
+      }
+
+      .phase-subtitle {
+        font-size: 12px;
+        color: rgba(225, 236, 255, 0.84);
+        text-align: center;
+        line-height: 1.5;
+        max-width: 220px;
+      }
+
+      .phase-progress {
+        width: 182px;
+        height: 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(137, 169, 243, 0.34);
+        background: rgba(12, 17, 30, 0.8);
+        overflow: hidden;
+        position: relative;
+      }
+
+      .phase-progress-bar {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 32%;
+        border-radius: inherit;
+        background: linear-gradient(
+          90deg,
+          rgba(37, 134, 231, 0.95),
+          rgba(53, 240, 232, 0.95)
+        );
+        box-shadow: 0 0 16px rgba(53, 240, 232, 0.52);
+        animation: progress-slide 1.6s ease-in-out infinite;
+      }
+
+      .phase-dots {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .phase-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(207, 226, 255, 0.55);
+        animation: phase-dot 1.1s ease-in-out infinite;
+      }
+
+      .phase-dot:nth-child(2) {
+        animation-delay: 0.14s;
+      }
+
+      .phase-dot:nth-child(3) {
+        animation-delay: 0.28s;
+      }
+
+      :root[data-phase="installing"] .phase-progress-bar {
+        animation-duration: 1.2s;
+        background: linear-gradient(
+          90deg,
+          rgba(31, 214, 170, 0.95),
+          rgba(115, 255, 205, 0.95)
+        );
+      }
+
       @keyframes neon-trace {
         from {
           stroke-dashoffset: 0;
@@ -251,16 +320,93 @@ const createMarkup = (): string => {
           transform: scale(1.06);
         }
       }
+
+      @keyframes progress-slide {
+        0% {
+          transform: translateX(-130%);
+        }
+        60% {
+          transform: translateX(300%);
+        }
+        100% {
+          transform: translateX(300%);
+        }
+      }
+
+      @keyframes phase-dot {
+        0%,
+        100% {
+          opacity: 0.3;
+          transform: translateY(0);
+        }
+        50% {
+          opacity: 1;
+          transform: translateY(-2px);
+        }
+      }
     </style>
   </head>
   <body>
     <main class="card" role="status" aria-live="assertive">
       <div class="logo-wrap">${logoContent}</div>
-      <p>Güncelleniyor...</p>
+      <p id="phaseTitle" class="phase-title">Yükleniyor...</p>
+      <p id="phaseSubtitle" class="phase-subtitle">Yeni sürüm indiriliyor. Lütfen uygulamayı kapatma.</p>
+      <div class="phase-progress" aria-hidden="true">
+        <div class="phase-progress-bar"></div>
+      </div>
+      <div class="phase-dots" aria-hidden="true">
+        <span class="phase-dot"></span>
+        <span class="phase-dot"></span>
+        <span class="phase-dot"></span>
+      </div>
     </main>
+
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const titleEl = document.getElementById("phaseTitle");
+        const subtitleEl = document.getElementById("phaseSubtitle");
+
+        const applyPhase = (phase) => {
+          const normalized = phase === "installing" ? "installing" : "downloading";
+          root.dataset.phase = normalized;
+
+          if (normalized === "installing") {
+            titleEl.textContent = "Güncelleniyor...";
+            subtitleEl.textContent = "Güncelleme kuruluyor. Uygulama birazdan otomatik yeniden açılacak.";
+            return;
+          }
+
+          titleEl.textContent = "Yükleniyor...";
+          subtitleEl.textContent = "Yeni sürüm indiriliyor. Lütfen uygulamayı kapatma.";
+        };
+
+        window.__ctSetUpdatePhase = applyPhase;
+        applyPhase("downloading");
+      })();
+    </script>
   </body>
 </html>
 `;
+};
+
+export const setUpdateInstallWindowPhase = (
+  win: BrowserWindow,
+  phase: UpdateInstallPhase,
+): void => {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+
+  const normalizedPhase = phase === "installing" ? "installing" : "downloading";
+  void win.webContents
+    .executeJavaScript(
+      `window.__ctSetUpdatePhase && window.__ctSetUpdatePhase("${normalizedPhase}")`,
+      true,
+    )
+    .catch(() => {
+      // no-op: window may be closing while install is starting
+    });
 };
 
 export const createUpdateInstallWindow = (): BrowserWindow => {
