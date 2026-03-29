@@ -23,6 +23,12 @@ let isQuitting = false;
 const desktopPreferencesStore = new DesktopPreferencesStore();
 const APP_USER_MODEL_ID = "com.nightdijital.connecttogether.desktop";
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
@@ -105,6 +111,14 @@ trayManager = createTrayManager({
     isQuitting = true;
     app.quit();
   },
+});
+
+app.on("second-instance", () => {
+  if (isQuitting) {
+    return;
+  }
+
+  void windowManager.showMainWindow();
 });
 
 appUpdater.onStateChanged((state) => {

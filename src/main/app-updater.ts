@@ -1,5 +1,7 @@
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
+import fs from "node:fs";
+import path from "node:path";
 import type { DesktopUpdateState } from "./types";
 
 interface DesktopAppUpdater {
@@ -35,23 +37,78 @@ export const createDesktopAppUpdater = (
   options: CreateDesktopAppUpdaterOptions = {},
 ): DesktopAppUpdater => {
   const listeners = new Set<(state: DesktopUpdateState) => void>();
+  const diagnosticsLogPath = path.join(
+    app.getPath("userData"),
+    "logs",
+    "updater.log",
+  );
+
+  const appendDiagnosticsLog = (
+    level: "info" | "warn" | "error",
+    event: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    try {
+      fs.mkdirSync(path.dirname(diagnosticsLogPath), { recursive: true });
+
+      const line = JSON.stringify(
+        {
+          ts: new Date().toISOString(),
+          level,
+          event,
+          pid: process.pid,
+          appVersion: app.getVersion(),
+          details,
+        },
+        (_key, value) => {
+          if (value instanceof Error) {
+            return {
+              name: value.name,
+              message: value.message,
+              stack: value.stack,
+            };
+          }
+
+          return value;
+        },
+      );
+
+      fs.appendFileSync(diagnosticsLogPath, `${line}\n`, "utf-8");
+    } catch {
+      // Ignore diagnostics failures to avoid blocking updater flow.
+    }
+  };
 
   const normalizeUpdaterErrorMessage = (error: unknown): string => {
+    appendDiagnosticsLog("error", "updater-error", {
+      error,
+    });
+
     if (!(error instanceof Error)) {
-      return "Bilinmeyen güncelleme hatası";
+      return `Bilinmeyen güncelleme hatasi. Tanilama kaydi: ${diagnosticsLogPath}`;
     }
 
     const rawMessage = (error.message || "").trim();
     if (!rawMessage) {
-      return "Bilinmeyen güncelleme hatası";
+      return `Bilinmeyen guncelleme hatasi. Tanilama kaydi: ${diagnosticsLogPath}`;
     }
 
     const compact = rawMessage.replace(/\s+/g, " ");
-    if (compact.length > 220) {
-      return `${compact.slice(0, 220)}...`;
+
+    if (/failed to uninstall old application files/i.test(compact)) {
+      return [
+        "Kurulum asamasinda onceki surum dosyalari kaldirilamadi (Windows code: 2).",
+        "Muhtemel neden: uygulamanin baska bir kopyasi hala acik veya dosya kilidi var.",
+        "Tum Connect Together sureclerini kapatip guncellemeyi tekrar deneyin.",
+        `Tanilama kaydi: ${diagnosticsLogPath}`,
+      ].join(" ");
     }
 
-    return compact;
+    if (compact.length > 220) {
+      return `${compact.slice(0, 220)}... Tanilama kaydi: ${diagnosticsLogPath}`;
+    }
+
+    return `${compact} Tanilama kaydi: ${diagnosticsLogPath}`;
   };
 
   let state: DesktopUpdateState = {
@@ -69,6 +126,13 @@ export const createDesktopAppUpdater = (
   let didBindAutoUpdaterEvents = false;
   let installAfterDownloadRequested = false;
   let didTriggerQuitAndInstall = false;
+
+  appendDiagnosticsLog("info", "updater-created", {
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    execPath: process.execPath,
+  });
 
   const waitForUpdateState = async (
     predicate: (nextState: DesktopUpdateState) => boolean,
@@ -109,11 +173,19 @@ export const createDesktopAppUpdater = (
 
   const quitAndInstall = (): void => {
     if (didTriggerQuitAndInstall) {
+      appendDiagnosticsLog("warn", "quit-and-install-skip", {
+        reason: "already-triggered",
+      });
       return;
     }
 
     didTriggerQuitAndInstall = true;
     installAfterDownloadRequested = false;
+    appendDiagnosticsLog("info", "quit-and-install", {
+      silent: true,
+      forceRunAfter: true,
+    });
+
     updateState({
       status: "installing",
       downloadProgressPercent: 100,
@@ -128,6 +200,7 @@ export const createDesktopAppUpdater = (
 
     // Give the dedicated update window enough time to paint before quitting.
     setTimeout(() => {
+      appendDiagnosticsLog("info", "quit-and-install-dispatch");
       autoUpdater.quitAndInstall(true, true);
     }, 1350);
   };
@@ -159,6 +232,7 @@ export const createDesktopAppUpdater = (
     autoUpdater.autoRunAppAfterInstall = true;
 
     autoUpdater.on("checking-for-update", () => {
+      appendDiagnosticsLog("info", "checking-for-update");
       updateState({
         status: "checking",
         message: "Güncelleme kontrol ediliyor...",
@@ -167,6 +241,9 @@ export const createDesktopAppUpdater = (
     });
 
     autoUpdater.on("update-available", (info) => {
+      appendDiagnosticsLog("info", "update-available", {
+        version: typeof info?.version === "string" ? info.version : null,
+      });
       updateState({
         status: "available",
         availableVersion:
@@ -178,6 +255,7 @@ export const createDesktopAppUpdater = (
     });
 
     autoUpdater.on("update-not-available", () => {
+      appendDiagnosticsLog("info", "update-not-available");
       updateState({
         status: "not-available",
         availableVersion: null,
@@ -191,6 +269,18 @@ export const createDesktopAppUpdater = (
       const percent = Number.isFinite(progress?.percent)
         ? Math.max(0, Math.min(100, Math.round(progress.percent)))
         : 0;
+
+      if (percent === 0 || percent % 10 === 0 || percent >= 98) {
+        appendDiagnosticsLog("info", "download-progress", {
+          percent,
+          transferred:
+            typeof progress?.transferred === "number"
+              ? progress.transferred
+              : null,
+          total: typeof progress?.total === "number" ? progress.total : null,
+        });
+      }
+
       updateState({
         status: "downloading",
         downloadProgressPercent: percent,
@@ -199,6 +289,10 @@ export const createDesktopAppUpdater = (
     });
 
     autoUpdater.on("update-downloaded", (info) => {
+      appendDiagnosticsLog("info", "update-downloaded", {
+        version: typeof info?.version === "string" ? info.version : null,
+        installAfterDownloadRequested,
+      });
       updateState({
         status: "downloaded",
         availableVersion:
@@ -218,6 +312,9 @@ export const createDesktopAppUpdater = (
     });
 
     autoUpdater.on("error", (error) => {
+      appendDiagnosticsLog("error", "auto-updater-event-error", {
+        error,
+      });
       const message = normalizeUpdaterErrorMessage(error);
       updateState({
         status: "error",
@@ -229,15 +326,22 @@ export const createDesktopAppUpdater = (
 
   const checkForUpdates = async (): Promise<DesktopUpdateState> => {
     if (!app.isPackaged) {
+      appendDiagnosticsLog("info", "check-for-updates-skip", {
+        reason: "not-packaged",
+      });
       return cloneState(state);
     }
 
     bindAutoUpdaterEvents();
 
     try {
+      appendDiagnosticsLog("info", "check-for-updates");
       await autoUpdater.checkForUpdates();
     } catch (error) {
       const message = normalizeUpdaterErrorMessage(error);
+      appendDiagnosticsLog("error", "check-for-updates-failed", {
+        error,
+      });
       updateState({
         status: "error",
         message,
@@ -253,6 +357,9 @@ export const createDesktopAppUpdater = (
     state: DesktopUpdateState;
   }> => {
     if (!app.isPackaged) {
+      appendDiagnosticsLog("info", "apply-update-skip", {
+        reason: "not-packaged",
+      });
       return {
         accepted: false,
         state: cloneState(state),
@@ -262,6 +369,9 @@ export const createDesktopAppUpdater = (
     bindAutoUpdaterEvents();
 
     if (state.status === "downloaded") {
+      appendDiagnosticsLog("info", "apply-update-direct-install", {
+        status: state.status,
+      });
       quitAndInstall();
       return {
         accepted: true,
@@ -271,6 +381,9 @@ export const createDesktopAppUpdater = (
 
     try {
       if (state.status !== "available") {
+        appendDiagnosticsLog("info", "apply-update-refresh-check", {
+          status: state.status,
+        });
         await autoUpdater.checkForUpdates();
 
         if (!isFinalCheckState(state.status)) {
@@ -288,6 +401,9 @@ export const createDesktopAppUpdater = (
       }
 
       installAfterDownloadRequested = true;
+      appendDiagnosticsLog("info", "apply-update-download-start", {
+        targetVersion: state.availableVersion,
+      });
       updateState({
         status: "downloading",
         downloadProgressPercent: 0,
@@ -297,6 +413,7 @@ export const createDesktopAppUpdater = (
       try {
         await autoUpdater.downloadUpdate();
       } catch {
+        appendDiagnosticsLog("warn", "download-retry");
         await autoUpdater.checkForUpdates();
         await autoUpdater.downloadUpdate();
       }
@@ -307,6 +424,9 @@ export const createDesktopAppUpdater = (
       };
     } catch (error) {
       installAfterDownloadRequested = false;
+      appendDiagnosticsLog("error", "apply-update-failed", {
+        error,
+      });
       const message = normalizeUpdaterErrorMessage(error);
       updateState({
         status: "error",

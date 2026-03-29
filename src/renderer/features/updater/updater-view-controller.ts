@@ -281,6 +281,37 @@ export const createUpdaterViewController = (
       typeof state.message === "string" && state.message.trim().length > 0
         ? state.message.trim()
         : "Bilinmeyen hata";
+
+    const isOldFilesUninstallError =
+      /failed to uninstall old application files/i.test(errorText) ||
+      /onceki surum dosyalari kaldirilamadi/i.test(errorText);
+
+    if (isOldFilesUninstallError) {
+      setUpdateHint(
+        "Kurulumda eski surum dosyalari kaldirilamadi. Tum Connect Together sureclerini kapatip tekrar deneyin.",
+      );
+      setUpdateActionButton({
+        label: "Tekrar Dene",
+      });
+      setSettingsSummary(
+        "Kurulum dosya kilidi nedeniyle tamamlanamadi.",
+        "error",
+      );
+      setSettingsUpdateInstallButton(null);
+
+      setDetailedError(
+        [
+          `Mesaj: ${errorText}`,
+          `Status: ${state.status}`,
+          `Current Version: v${state.currentVersion}`,
+          `Available Version: ${state.availableVersion ? `v${state.availableVersion}` : "-"}`,
+          `Last Checked: ${formatCheckedAt(state.checkedAt)}`,
+          "Oneri: Gorev Yoneticisi'nden acik Connect Together sureclerini kapatin ve guncellemeyi tekrar baslatin.",
+        ].join("\n"),
+      );
+      return;
+    }
+
     setUpdateHint(`Güncelleme hatası: ${errorText}`);
     setUpdateActionButton({
       label: "Tekrar Dene",
