@@ -65,20 +65,40 @@ const backendClient = new BackendClient(backendBaseUrl);
 const realtimeClient = new RealtimeClient(backendBaseUrl);
 const sessionStore = new SessionStore();
 
-let trayManager: ReturnType<typeof createTrayManager>;
+let trayManager: ReturnType<typeof createTrayManager> | null = null;
 const windowManager = createWindowManager({
   shouldHideMainWindowOnClose: () => {
     const prefs = desktopPreferencesStore.get();
     return !isQuitting && prefs.closeToTrayOnClose;
   },
   onHideToTrayRequested: () => {
-    trayManager.ensureTray();
+    trayManager?.ensureTray();
   },
 });
 
 let updateWindowTransitionInFlight = false;
 let queuedUpdateWindowPhase: "downloading" | "installing" | null = null;
 let updateWindowTransitionsBlocked = false;
+let didRunPreQuitCleanup = false;
+
+const runPreQuitCleanup = (
+  reason: "update" | "before-quit" | "quit-requested",
+): void => {
+  if (didRunPreQuitCleanup) {
+    return;
+  }
+
+  didRunPreQuitCleanup = true;
+  isQuitting = true;
+  realtimeClient.disconnect();
+  trayManager?.destroyTray();
+  console.log(`[desktop] pre-quit cleanup completed (${reason})`);
+};
+
+const restoreAfterFailedUpdateInstall = (): void => {
+  isQuitting = false;
+  didRunPreQuitCleanup = false;
+};
 
 const ensureUpdateWindowVisible = async (
   phase: "downloading" | "installing",
@@ -121,10 +141,10 @@ const ensureUpdateWindowVisible = async (
 
 const appUpdater = createDesktopAppUpdater({
   onBeforeQuitAndInstall: async () => {
-    isQuitting = true;
-    trayManager.destroyTray();
+    runPreQuitCleanup("update");
     await ensureUpdateWindowVisible("installing");
   },
+  installWatchdogMs: 20_000,
 });
 
 const applyLaunchAtStartup = (enabled: boolean): void => {
@@ -150,7 +170,7 @@ trayManager = createTrayManager({
     void windowManager.showMainWindow();
   },
   onQuitRequested: () => {
-    isQuitting = true;
+    runPreQuitCleanup("quit-requested");
     app.quit();
   },
 });
@@ -179,7 +199,7 @@ appUpdater.onStateChanged((state) => {
   if (state.status === "error") {
     updateWindowTransitionsBlocked = true;
     queuedUpdateWindowPhase = null;
-    isQuitting = false;
+    restoreAfterFailedUpdateInstall();
     windowManager.hideUpdateInstallWindow();
     void windowManager.showMainWindow();
 
@@ -213,7 +233,7 @@ registerDesktopIpcHandlers({
     const next = desktopPreferencesStore.update(patch);
     applyLaunchAtStartup(next.launchAtStartup);
     if (!next.closeToTrayOnClose) {
-      trayManager.destroyTray();
+      trayManager?.destroyTray();
     }
 
     if (previous.gpuAccelerationEnabled !== next.gpuAccelerationEnabled) {
@@ -246,7 +266,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
-  isQuitting = true;
+  runPreQuitCleanup("before-quit");
 });
 
 app.on("child-process-gone", (_event, details) => {

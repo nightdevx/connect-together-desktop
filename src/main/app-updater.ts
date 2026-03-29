@@ -14,6 +14,7 @@ interface DesktopAppUpdater {
 
 interface CreateDesktopAppUpdaterOptions {
   onBeforeQuitAndInstall?: () => void | Promise<void>;
+  installWatchdogMs?: number;
 }
 
 const isFinalCheckState = (status: DesktopUpdateState["status"]): boolean => {
@@ -126,6 +127,11 @@ export const createDesktopAppUpdater = (
   let didBindAutoUpdaterEvents = false;
   let installAfterDownloadRequested = false;
   let didTriggerQuitAndInstall = false;
+  let installWatchdogRef: NodeJS.Timeout | null = null;
+
+  const installWatchdogTimeoutMs = Number.isFinite(options.installWatchdogMs)
+    ? Math.max(10_000, Math.round(options.installWatchdogMs ?? 20_000))
+    : 20_000;
 
   appendDiagnosticsLog("info", "updater-created", {
     isPackaged: app.isPackaged,
@@ -171,6 +177,50 @@ export const createDesktopAppUpdater = (
     });
   };
 
+  const clearInstallWatchdog = (reason: string): void => {
+    if (!installWatchdogRef) {
+      return;
+    }
+
+    clearTimeout(installWatchdogRef);
+    installWatchdogRef = null;
+    appendDiagnosticsLog("info", "quit-and-install-watchdog-clear", {
+      reason,
+    });
+  };
+
+  const scheduleInstallWatchdog = (): void => {
+    clearInstallWatchdog("reschedule");
+
+    installWatchdogRef = setTimeout(() => {
+      installWatchdogRef = null;
+      didTriggerQuitAndInstall = false;
+      installAfterDownloadRequested = false;
+
+      appendDiagnosticsLog("error", "quit-and-install-timeout", {
+        timeoutMs: installWatchdogTimeoutMs,
+      });
+
+      updateState({
+        status: "error",
+        downloadProgressPercent: null,
+        message: [
+          "Kurulum tamamlanamadi: uygulama beklenen surede kapanmadi.",
+          "Muhtemel neden: arka planda kalan process dosyalari kilitledi.",
+          "Tum Connect Together sureclerini kapatip guncellemeyi tekrar deneyin.",
+          `Tanilama kaydi: ${diagnosticsLogPath}`,
+        ].join(" "),
+        checkedAt: new Date().toISOString(),
+      });
+    }, installWatchdogTimeoutMs);
+
+    installWatchdogRef.unref?.();
+
+    appendDiagnosticsLog("info", "quit-and-install-watchdog-start", {
+      timeoutMs: installWatchdogTimeoutMs,
+    });
+  };
+
   const quitAndInstall = async (): Promise<void> => {
     if (didTriggerQuitAndInstall) {
       appendDiagnosticsLog("warn", "quit-and-install-skip", {
@@ -192,10 +242,15 @@ export const createDesktopAppUpdater = (
       message: "Güncelleme kuruluyor...",
     });
 
+    appendDiagnosticsLog("info", "pre-quit-cleanup-start");
     try {
       await options.onBeforeQuitAndInstall?.();
+      appendDiagnosticsLog("info", "pre-quit-cleanup-done");
     } catch (error) {
       console.warn("[desktop] onBeforeQuitAndInstall failed:", error);
+      appendDiagnosticsLog("warn", "pre-quit-cleanup-failed", {
+        error,
+      });
     }
 
     // Give the dedicated update window enough time to paint before quitting.
@@ -206,7 +261,25 @@ export const createDesktopAppUpdater = (
     });
 
     appendDiagnosticsLog("info", "quit-and-install-dispatch");
-    autoUpdater.quitAndInstall(true, true);
+    scheduleInstallWatchdog();
+
+    try {
+      autoUpdater.quitAndInstall(true, true);
+    } catch (error) {
+      clearInstallWatchdog("dispatch-throw");
+      didTriggerQuitAndInstall = false;
+      installAfterDownloadRequested = false;
+
+      appendDiagnosticsLog("error", "quit-and-install-dispatch-failed", {
+        error,
+      });
+
+      updateState({
+        status: "error",
+        message: normalizeUpdaterErrorMessage(error),
+        checkedAt: new Date().toISOString(),
+      });
+    }
   };
 
   const emit = (): void => {
@@ -316,6 +389,7 @@ export const createDesktopAppUpdater = (
     });
 
     autoUpdater.on("error", (error) => {
+      clearInstallWatchdog("auto-updater-error");
       appendDiagnosticsLog("error", "auto-updater-event-error", {
         error,
       });
